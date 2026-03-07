@@ -32,42 +32,27 @@ const LoginPage = () => {
       return;
     }
 
-    // 2. Auth Flow
-    if (tab === "phone") {
-        if (!isOtpSent) {
-            const { success, error } = await authService.sendPhoneOtp(inputValue);
-            if (success) {
-                setIsOtpSent(true);
-                toast({ title: "OTP Sent", description: "Please check your phone for the 6-digit code." });
-            } else {
-                toast({ title: "Error", description: error || "Failed to send OTP", variant: "destructive" });
-            }
-        } else {
-            // Verify OTP
-            const { success, error } = await authService.verifyPhoneOtp(inputValue, otpToken, name);
-            if (success) {
-                toast({ title: "Welcome!", description: "You are now logged in." });
-                navigate("/");
-            } else {
-                toast({ title: "Verification Failed", description: error || "Could not verify OTP", variant: "destructive" });
-            }
-        }
-    } else {
-        // Email Flow
-        if (!password) {
-            toast({ title: "Missing Password", description: "Please enter your password.", variant: "destructive" });
-            return;
-        }
-        const { success, error } = isSignUp
-            ? await authService.signup(name, inputValue, password)
-            : await authService.login(inputValue, password);
-
-        if (success) {
-            navigate("/");
-        } else {
-            toast({ title: "Auth Failed", description: error || "Authentication error occurred.", variant: "destructive" });
-        }
+    if (!password) {
+      toast({ title: "Missing Password", description: "Please enter your password.", variant: "destructive" });
+      return;
     }
+
+    // 2. Dummy Auth Flow (Bypass Backend)
+    const userData = {
+      id: `dummy_${Date.now()}`,
+      name: isSignUp ? name.trim() : (tab === "phone" ? "User" : inputValue.split('@')[0] || "User"),
+      phoneOrEmail: inputValue,
+      passwordHash: password
+    };
+
+    // Clear any previous profile customizations on new login
+    localStorage.removeItem("userProfile");
+
+    // Save to localStorage so authService.getCurrentUser() and Profile section will pick it up
+    localStorage.setItem("busconnect_current_user", JSON.stringify(userData));
+
+    toast({ title: "Welcome!", description: isSignUp ? "Account created successfully." : "You are now logged in." });
+    navigate("/");
   };
 
   return (
@@ -85,20 +70,20 @@ const LoginPage = () => {
       <div className="px-6 pt-6 flex-1">
         <h2 className="text-2xl font-extrabold">{isSignUp ? "Create an account" : "Welcome back"}</h2>
         <p className="text-muted-foreground text-sm mt-1">
-          {tab === "phone" ? "Use your mobile number to authenticate via OTP" : (isSignUp ? "Sign up with your email" : "Login with your email")}
+          {tab === "phone" ? (isSignUp ? "Sign up with your mobile number" : "Login with your mobile number") : (isSignUp ? "Sign up with your email" : "Login with your email")}
         </p>
 
         {/* Tabs */}
         <div className="flex mt-6 bg-secondary rounded-full p-1">
           <button
-            onClick={() => { setTab("phone"); setIsOtpSent(false); }}
+            onClick={() => { setTab("phone"); }}
             className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-all ${tab === "phone" ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
               }`}
           >
             Phone Number
           </button>
           <button
-            onClick={() => { setTab("email"); setIsOtpSent(false); }}
+            onClick={() => { setTab("email"); }}
             className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-all ${tab === "email" ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
               }`}
           >
@@ -120,7 +105,6 @@ const LoginPage = () => {
                   className="pl-10"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  disabled={isOtpSent}
                 />
               </div>
             </div>
@@ -139,58 +123,40 @@ const LoginPage = () => {
                 className="pl-10"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                disabled={isOtpSent}
               />
             </div>
           </div>
 
-          {tab === "phone" && isOtpSent && (
-            <div className="animate-in fade-in slide-in-from-top-2 duration-300">
-              <label className="text-sm font-semibold mb-1.5 block">Enter OTP Code</label>
-              <Input placeholder="6-digit OTP code" value={otpToken} onChange={(e) => setOtpToken(e.target.value)} />
-              <button 
-                onClick={() => setIsOtpSent(false)} 
-                className="text-[10px] text-primary underline mt-1"
+          <div>
+            <label className="text-sm font-semibold mb-1.5 block">Password</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                <Lock className="w-4 h-4" />
+              </span>
+              <Input
+                type={showPassword ? "text" : "password"}
+                placeholder="••••••••"
+                className="pl-10 pr-10"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
               >
-                Resend OTP / Change Number
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-          )}
-
-          {tab === "email" && (
-            <div>
-              <label className="text-sm font-semibold mb-1.5 block">Password</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                  <Lock className="w-4 h-4" />
-                </span>
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
-                  className="pl-10 pr-10"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <button
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <p className="text-right mt-1.5">
-                {!isSignUp && (
-                  <button className="text-xs text-primary font-semibold">Forgot Password?</button>
-                )}
-              </p>
-            </div>
-          )}
+            <p className="text-right mt-1.5">
+              {!isSignUp && (
+                <button className="text-xs text-primary font-semibold">Forgot Password?</button>
+              )}
+            </p>
+          </div>
         </div>
 
         <Button onClick={handleAuthAction} className="w-full mt-5 h-12 text-base font-bold rounded-xl">
-          {tab === "phone" 
-            ? (isOtpSent ? "Verify & Log In" : "Get OTP Code") 
-            : (isSignUp ? "Sign Up" : "Login")}
+          {isSignUp ? "Sign Up" : "Login"}
         </Button>
 
         <div className="flex items-center gap-3 my-5">
