@@ -117,9 +117,15 @@ const RouteSearchPage = () => {
             to_stop: destination.trim()
         }, tripType);
 
-        navigate("/routes", {
-            state: { state: selectedState, tripType, origin: origin.trim(), destination: destination.trim() },
-        });
+        if (tripType === "intercity" && selectedState === "Chandigarh") {
+            navigate("/connecting-routes", {
+                state: { origin: origin.trim(), destination: destination.trim() },
+            });
+        } else {
+            navigate("/routes", {
+                state: { state: selectedState, tripType, origin: origin.trim(), destination: destination.trim() },
+            });
+        }
     };
 
     const accentColor = tripType === "intercity" ? "#4f46e5" : "#ea580c";

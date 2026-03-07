@@ -52,6 +52,10 @@ export const CITY_COORDS: Record<string, [number, number]> = {
     "Kurali": [30.8222, 76.5744],
     "Sohana": [30.6853, 76.7215],
     "Chhappar Chiri": [30.7032, 76.6715],
+    "ISBT 17": [30.7398, 76.7827],
+    "ISBT 43": [30.7250, 76.7460],
+    "PGI": [30.7670, 76.7770],
+    "Cantonment": [30.6900, 76.8500],
 };
 
 const CORRIDORS = {

@@ -22,6 +22,7 @@ import HighwayRadarPage from "./pages/HighwayRadarPage";
 import TripTypeSelectionPage from "./pages/TripTypeSelectionPage";
 import RouteSearchPage from "./pages/RouteSearchPage";
 import OutstationSearchPage from "./pages/OutstationSearchPage";
+import ConnectingRoutesPage from "./pages/ConnectingRoutesPage";
 import BookTicketPage from "./pages/BookTicketPage";
 import SeatSelectionPage from "./pages/SeatSelectionPage";
 import UpiPaymentPage from "./pages/UpiPaymentPage";
@@ -79,6 +80,7 @@ const AnimatedRoutes = () => {
           <Route path="/radar" element={<HighwayRadarPage />} />
           <Route path="/trip-type" element={<TripTypeSelectionPage />} />
           <Route path="/route-search" element={<RouteSearchPage />} />
+          <Route path="/connecting-routes" element={<ConnectingRoutesPage />} />
           <Route path="/outstation-search" element={<OutstationSearchPage />} />
           <Route path="/seat-selection" element={<SeatSelectionPage />} />
           <Route path="/book-ticket" element={<BookTicketPage />} />
