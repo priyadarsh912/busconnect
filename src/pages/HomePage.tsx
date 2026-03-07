@@ -57,8 +57,8 @@ const HomePage = () => {
     <PageShell>
       {/* Header */}
       <motion.div variants={fadeUp} className="flex items-center justify-between mb-4">
-        <motion.div whileTap={{ scale: 0.9 }} className="w-10 h-10 rounded-full bg-secondary overflow-hidden flex items-center justify-center border border-border">
-          <img src="/bus_app_icon.png" alt="Bus Connect Logo" className="w-full h-full object-cover" />
+        <motion.div whileTap={{ scale: 0.9 }} className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center">
+          <img src="/b_logo.png" alt="Bus Connect Logo" className="w-full h-full object-contain" />
         </motion.div>
         <h1 className="text-xl font-extrabold text-primary">Bus Connect</h1>
         <div className="flex gap-2">
