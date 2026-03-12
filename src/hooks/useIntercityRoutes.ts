@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { loadBusRoutes, RouteEntry } from '../utils/ExcelLoader';
+import { RouteEntry } from '../utils/ExcelLoader';
+import { getRoutesForState } from '../data/stateDatasets';
 
-export const useIntercityRoutes = () => {
+export const useIntercityRoutes = (stateName: string = "Chandigarh") => {
     const [routes, setRoutes] = useState<RouteEntry[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -10,7 +11,7 @@ export const useIntercityRoutes = () => {
         const load = async () => {
             try {
                 setIsLoading(true);
-                const data = await loadBusRoutes();
+                const data = await getRoutesForState(stateName, "intercity");
                 setRoutes(data);
             } catch (err) {
                 setError('Failed to load intercity routes');
@@ -20,7 +21,7 @@ export const useIntercityRoutes = () => {
             }
         };
         load();
-    }, []);
+    }, [stateName]);
 
     return { routes, isLoading, error };
 };

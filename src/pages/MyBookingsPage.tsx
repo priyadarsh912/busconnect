@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Ticket, MapPin, Calendar, Clock } from "lucide-react";
+import { ArrowLeft, Ticket, MapPin, Calendar, Clock, RefreshCw } from "lucide-react";
 import PageShell from "@/components/PageShell";
+import { supabase } from "../lib/supabase";
+import { authService } from "../services/authService";
 
 interface Booking {
     id: number;
@@ -16,9 +18,45 @@ const MyBookingsPage = () => {
     const navigate = useNavigate();
     const [bookings, setBookings] = useState<Booking[]>([]);
 
+    const [loading, setLoading] = useState(true);
+
     useEffect(() => {
-        const saved = JSON.parse(localStorage.getItem("myBookings") || "[]");
-        setBookings(saved);
+        const fetchBookings = async () => {
+            setLoading(true);
+            const currentUser = authService.getCurrentUser();
+            
+            if (currentUser) {
+                // Fetch from Supabase
+                const { data, error } = await supabase
+                    .from('bookings')
+                    .select('*')
+                    .eq('user_id', currentUser.id)
+                    .order('created_at', { ascending: false });
+
+                if (data && !error) {
+                    const mappedBookings: Booking[] = data.map(b => ({
+                        id: b.id,
+                        from: b.from_stop,
+                        to: b.to_stop,
+                        time: b.departure_time,
+                        price: b.price,
+                        date: b.booking_date
+                    }));
+                    setBookings(mappedBookings);
+                } else {
+                    // Fallback to localStorage if Supabase fails
+                    const saved = JSON.parse(localStorage.getItem("myBookings") || "[]");
+                    setBookings(saved);
+                }
+            } else {
+                // Logged out: just show local
+                const saved = JSON.parse(localStorage.getItem("myBookings") || "[]");
+                setBookings(saved);
+            }
+            setLoading(false);
+        };
+
+        fetchBookings();
     }, []);
 
     return (
@@ -29,7 +67,12 @@ const MyBookingsPage = () => {
                 <div className="w-7" />
             </div>
 
-            {bookings.length === 0 ? (
+            {loading ? (
+                <div className="flex flex-col items-center justify-center pt-20">
+                    <RefreshCw className="w-8 h-8 text-primary animate-spin mb-4" />
+                    <p className="text-sm text-muted-foreground">Syncing your bookings...</p>
+                </div>
+            ) : bookings.length === 0 ? (
                 <div className="flex flex-col items-center justify-center pt-20 text-center">
                     <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center mb-4">
                         <Ticket className="w-8 h-8 text-muted-foreground" />

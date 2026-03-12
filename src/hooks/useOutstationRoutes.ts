@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { loadOutstationRoutes, OutstationRouteEntry } from '../utils/OutstationLoader';
+import { OutstationRouteEntry } from '../utils/OutstationLoader';
+import { getRoutesForState } from '../data/stateDatasets';
 
-export const useOutstationRoutes = () => {
+export const useOutstationRoutes = (stateName: string = "Chandigarh") => {
     const [routes, setRoutes] = useState<OutstationRouteEntry[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -10,7 +11,7 @@ export const useOutstationRoutes = () => {
         const load = async () => {
             try {
                 setIsLoading(true);
-                const data = await loadOutstationRoutes();
+                const data = await getRoutesForState(stateName, "outstation");
                 setRoutes(data);
             } catch (err) {
                 setError('Failed to load outstation routes');
@@ -20,7 +21,7 @@ export const useOutstationRoutes = () => {
             }
         };
         load();
-    }, []);
+    }, [stateName]);
 
     return { routes, isLoading, error };
 };

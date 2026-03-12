@@ -8,6 +8,7 @@ import { useIntercityRoutes } from "@/hooks/useIntercityRoutes";
 import { useOutstationRoutes } from "@/hooks/useOutstationRoutes";
 import { RouteEntry } from "@/utils/ExcelLoader";
 import { OutstationRouteEntry } from "@/utils/OutstationLoader";
+import { useLanguage } from "@/lib/language";
 
 // City → State mapping for filtering
 const CITY_STATE: Record<string, string[]> = {
@@ -66,14 +67,15 @@ const stagger = {
 const RoutesPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useLanguage();
 
-  const selectedState: string = location.state?.state ?? "Chandigarh";
+  const selectedState: string = location.state?.state || localStorage.getItem("selectedState") || "Chandigarh";
   const tripType: "intercity" | "outstation" = location.state?.tripType ?? "intercity";
   const origin: string = location.state?.origin ?? "";
   const destination: string = location.state?.destination ?? "";
 
-  const intercity = useIntercityRoutes();
-  const outstation = useOutstationRoutes();
+  const intercity = useIntercityRoutes(selectedState);
+  const outstation = useOutstationRoutes(selectedState);
 
   const [routes, setRoutes] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -97,13 +99,12 @@ const RoutesPage = () => {
         });
         setRoutes(filtered.slice(0, 50));
       } else {
-        const filtered = outstation.routes.filter((r) => {
-          // All outstation routes are valid
+        const filtered = outstation.routes.filter((r: any) => {
           if (origin && destination) {
             const qO = origin.toLowerCase();
             const qD = destination.toLowerCase();
-            const sC = r.start_city.toLowerCase();
-            const eC = r.end_city.toLowerCase();
+            const sC = (r.start_city || r.start_stop || "").toLowerCase();
+            const eC = (r.end_city || r.end_stop || "").toLowerCase();
             return (sC.includes(qO) || qO.includes(sC)) && (eC.includes(qD) || qD.includes(eC));
           }
           return true;
@@ -113,7 +114,7 @@ const RoutesPage = () => {
     }
   }, [tripType, origin, destination, intercity.isLoading, outstation.isLoading, intercity.routes, outstation.routes]);
 
-  const tripLabel = tripType === "intercity" ? "Intercity" : "Outstation";
+  const tripLabel = tripType === "intercity" ? t("routes.intercity") : t("routes.outstation");
   const accentColor = tripType === "intercity" ? "#4f46e5" : "#ea580c";
   const accentBg = tripType === "intercity"
     ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
@@ -140,7 +141,7 @@ const RoutesPage = () => {
             <MapPin className="w-3 h-3" />
             {origin && destination
               ? `${selectedState} • ${tripLabel}`
-              : "Sector-wise local routes"}
+              : t("routes.sectorWiseLocalRoutes")}
           </p>
         </div>
       </motion.div>
@@ -151,7 +152,7 @@ const RoutesPage = () => {
           {tripLabel}
         </span>
         <span className="text-xs text-muted-foreground font-medium">
-          {isLoading ? "Loading…" : `${routes.length} routes found`}
+          {isLoading ? t("routes.loading") : t("routes.routesFound", { count: routes.length })}
         </span>
       </motion.div>
 
@@ -159,7 +160,7 @@ const RoutesPage = () => {
       {isLoading && (
         <div className="flex flex-col items-center justify-center py-20 gap-4">
           <div className="w-10 h-10 rounded-full border-4 border-primary border-t-transparent animate-spin" />
-          <p className="text-sm text-muted-foreground font-medium">Fetching routes…</p>
+          <p className="text-sm text-muted-foreground font-medium">{t("routes.fetching")}</p>
         </div>
       )}
 
@@ -169,20 +170,20 @@ const RoutesPage = () => {
           <div className="w-16 h-16 rounded-2xl bg-secondary flex items-center justify-center">
             <Bus className="w-8 h-8 text-muted-foreground" />
           </div>
-          <p className="font-bold text-lg">No Buses Found</p>
+          <p className="font-bold text-lg">{t("routes.noBusesFound")}</p>
           <p className="text-sm text-muted-foreground max-w-xs">
             {origin && destination
-              ? `No ${tripLabel.toLowerCase()} buses found from ${origin} to ${destination}.`
-              : `No ${tripLabel.toLowerCase()} routes found for ${selectedState}.`}
+              ? t("routes.noBusesBetween", { tripType: tripLabel.toLowerCase(), origin, destination })
+              : t("routes.noRoutesForState", { tripType: tripLabel.toLowerCase(), state: selectedState })}
           </p>
           <Button onClick={() => navigate(-1)} variant="outline" className="mt-1 rounded-full">
-            Change Route
+            {t("routes.changeRoute")}
           </Button>
 
           {origin && (
             <div className="w-full mt-4 text-left">
               <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                Nearby routes from {origin}
+                {t("routes.nearbyRoutesFrom", { origin })}
               </p>
               <div className="space-y-2">
                 {(tripType === "intercity"
@@ -226,8 +227,8 @@ const RoutesPage = () => {
               transition={{ type: "spring", stiffness: 300, damping: 22 }}
               className="bg-card rounded-2xl border border-border p-4 cursor-pointer"
               onClick={() => {
-                const from = tripType === "intercity" ? (route as RouteEntry).from_stop : (route as OutstationRouteEntry).start_city;
-                const to = tripType === "intercity" ? (route as RouteEntry).to_stop : (route as OutstationRouteEntry).end_city;
+                const from = tripType === "intercity" ? (route as RouteEntry).from_stop : ((route as any).start_city || (route as any).start_stop);
+                const to = tripType === "intercity" ? (route as RouteEntry).to_stop : ((route as any).end_city || (route as any).end_stop);
                 navigate("/bus-results", {
                   state: { from, to, state: selectedState, tripType },
                 });
@@ -240,7 +241,7 @@ const RoutesPage = () => {
                       className="text-[11px] font-bold px-2 py-0.5 rounded-md"
                       style={{ background: accentColor + "20", color: accentColor }}
                     >
-                      {route.route_no}
+                      {route.route_no || (route as any).route_id}
                     </span>
                     <span
                       className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${route.crowd.toLowerCase() === "low" ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" :
@@ -262,17 +263,17 @@ const RoutesPage = () => {
                       </>
                     ) : (
                       <>
-                        {(route as OutstationRouteEntry).start_city}{" "}
+                        {((route as any).start_city || (route as any).start_stop)}{" "}
                         <span className="text-muted-foreground font-normal">→</span>{" "}
-                        <span className="text-primary">{(route as OutstationRouteEntry).stop_city}</span>{" "}
+                        <span className="text-primary">{((route as any).stop_city || (route as any).stop_1)}</span>{" "}
                         <span className="text-muted-foreground font-normal">→</span>{" "}
-                        {(route as OutstationRouteEntry).end_city}
+                        {((route as any).end_city || (route as any).end_stop)}
                       </>
                     )}
                   </p>
                   <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                     <Clock className="w-3 h-3" />
-                    {tripType === "intercity" ? `~${(route as RouteEntry).eta_min} min` : (route as OutstationRouteEntry).eta}
+                    {tripType === "intercity" ? `~${(route as RouteEntry).eta_min} min` : ((route as any).eta || `~${(route as any).eta_min} min`)}
                   </p>
                 </div>
                 <div className="text-right shrink-0 flex flex-col items-end gap-1">

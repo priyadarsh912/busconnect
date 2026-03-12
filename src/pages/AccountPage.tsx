@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import PageShell from "@/components/PageShell";
 import { authService } from "../services/authService";
+import { useLanguage } from "@/lib/language";
 
 interface UserProfile {
   name: string;
@@ -24,18 +25,19 @@ const DEFAULT_PROFILE: UserProfile = {
   password: "password123",
 };
 
-const travelItems = [
-  { icon: BookOpen, label: "My Bookings", path: "/my-bookings" },
-  { icon: MapPin, label: "Saved Routes", path: "/routes" },
-];
-
-const appItems = [
-  { icon: Settings, label: "Settings", path: "/settings" },
-  { icon: HelpCircle, label: "Help & Support", path: "/help" },
-];
-
 const AccountPage = () => {
   const navigate = useNavigate();
+  const { t } = useLanguage();
+
+  const travelItems = [
+    { icon: BookOpen, label: t("account.myBookings"), path: "/my-bookings" },
+    { icon: MapPin, label: t("account.savedRoutes"), path: "/routes" },
+  ];
+
+  const appItems = [
+    { icon: Settings, label: t("account.settings"), path: "/settings" },
+    { icon: HelpCircle, label: t("account.helpSupport"), path: "/help" },
+  ];
 
   // ─── Profile state ───
   const [profile, setProfile] = useState<UserProfile>(() => {
@@ -80,20 +82,20 @@ const AccountPage = () => {
   };
 
   const handleSave = () => {
-    if (!draft.name.trim()) { toast.error("Name is required"); return; }
-    if (!draft.email.trim() || !draft.email.includes("@")) { toast.error("Valid email is required"); return; }
-    if (!draft.phone.trim()) { toast.error("Phone number is required"); return; }
-    if (draft.password.length < 6) { toast.error("Password must be at least 6 characters"); return; }
+    if (!draft.name.trim()) { toast.error(t("account.nameRequired")); return; }
+    if (!draft.email.trim() || !draft.email.includes("@")) { toast.error(t("account.validEmailRequired")); return; }
+    if (!draft.phone.trim()) { toast.error(t("account.phoneRequired")); return; }
+    if (draft.password.length < 6) { toast.error(t("account.passwordLength")); return; }
 
     setProfile(draft);
     setEditing(false);
-    toast.success("Profile updated successfully!");
+    toast.success(t("account.profileUpdated"));
   };
 
   const handleLogout = () => {
     localStorage.removeItem("userProfile"); // Keep this to clear local profile draft if desired
     authService.logout();
-    toast.success("Logged out successfully");
+    toast.success(t("account.loggedOut"));
     navigate("/login");
   };
 
@@ -102,7 +104,7 @@ const AccountPage = () => {
       {/* Header */}
       <div className="flex items-center mb-6">
         <button onClick={() => navigate(-1)} className="p-1"><ArrowLeft className="w-5 h-5" /></button>
-        <h1 className="flex-1 text-center font-bold text-lg">Account</h1>
+        <h1 className="flex-1 text-center font-bold text-lg">{t("account.title")}</h1>
         <div className="w-7" />
       </div>
 
@@ -128,7 +130,7 @@ const AccountPage = () => {
         /* ─── Edit Profile Form ─── */
         <div className="bg-card rounded-xl border border-border p-4 mb-6 space-y-4">
           <div className="flex items-center justify-between mb-1">
-            <h2 className="font-bold text-base">Edit Profile</h2>
+            <h2 className="font-bold text-base">{t("account.editProfile")}</h2>
             <button onClick={handleCancelEdit} className="p-1 text-muted-foreground hover:text-foreground">
               <X className="w-5 h-5" />
             </button>
@@ -136,21 +138,21 @@ const AccountPage = () => {
 
           {/* Name */}
           <div>
-            <label className="text-xs font-semibold text-muted-foreground mb-1 block">Full Name</label>
+            <label className="text-xs font-semibold text-muted-foreground mb-1 block">{t("account.fullName")}</label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                 className="pl-10 rounded-xl h-11"
-                placeholder="Your full name"
+                placeholder={t("account.yourFullName")}
               />
             </div>
           </div>
 
           {/* Email */}
           <div>
-            <label className="text-xs font-semibold text-muted-foreground mb-1 block">Email Address</label>
+            <label className="text-xs font-semibold text-muted-foreground mb-1 block">{t("account.emailAddress")}</label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -165,7 +167,7 @@ const AccountPage = () => {
 
           {/* Phone */}
           <div>
-            <label className="text-xs font-semibold text-muted-foreground mb-1 block">Phone Number</label>
+            <label className="text-xs font-semibold text-muted-foreground mb-1 block">{t("account.phoneNumber")}</label>
             <div className="relative">
               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -180,7 +182,7 @@ const AccountPage = () => {
 
           {/* Password */}
           <div>
-            <label className="text-xs font-semibold text-muted-foreground mb-1 block">Password</label>
+            <label className="text-xs font-semibold text-muted-foreground mb-1 block">{t("account.password")}</label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -188,7 +190,7 @@ const AccountPage = () => {
                 value={draft.password}
                 onChange={(e) => setDraft({ ...draft, password: e.target.value })}
                 className="pl-10 pr-10 rounded-xl h-11"
-                placeholder="Min 6 characters"
+                placeholder={t("account.minSixCharacters")}
               />
               <button
                 type="button"
@@ -201,13 +203,13 @@ const AccountPage = () => {
           </div>
 
           <Button onClick={handleSave} className="w-full h-11 rounded-xl font-bold">
-            <Save className="w-4 h-4 mr-2" /> Save Changes
+            <Save className="w-4 h-4 mr-2" /> {t("account.saveChanges")}
           </Button>
         </div>
       )}
 
       {/* ─── Travel Management ─── */}
-      <p className="text-xs font-semibold text-muted-foreground tracking-wider mb-2">TRAVEL MANAGEMENT</p>
+      <p className="text-xs font-semibold text-muted-foreground tracking-wider mb-2">{t("account.travelManagement")}</p>
       <div className="bg-card rounded-xl border border-border mb-5 divide-y divide-border">
         {travelItems.map((item) => (
           <button key={item.label} onClick={() => navigate(item.path)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
@@ -221,7 +223,7 @@ const AccountPage = () => {
       </div>
 
       {/* ─── Application ─── */}
-      <p className="text-xs font-semibold text-muted-foreground tracking-wider mb-2">APPLICATION</p>
+      <p className="text-xs font-semibold text-muted-foreground tracking-wider mb-2">{t("account.application")}</p>
       <div className="bg-card rounded-xl border border-border mb-5 divide-y divide-border">
         {appItems.map((item) => (
           <button key={item.label} onClick={() => navigate(item.path)} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
@@ -240,7 +242,7 @@ const AccountPage = () => {
         onClick={handleLogout}
         className="w-full h-12 rounded-xl text-destructive border-destructive/20 hover:bg-destructive/5 font-bold"
       >
-        <LogOut className="w-5 h-5 mr-2" /> Log Out
+        <LogOut className="w-5 h-5 mr-2" /> {t("account.logOut")}
       </Button>
     </PageShell>
   );

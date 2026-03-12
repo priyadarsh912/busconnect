@@ -26,7 +26,7 @@ const calculateFare = (distance: number): number => {
 
 export const loadBusRoutes = async (): Promise<RouteEntry[]> => {
     try {
-        const response = await fetch('/tricity_bus_routes_3000.xlsx');
+        const response = await fetch('/datasets/tricity_bus_routes_3000.xlsx');
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         const sheetName = workbook.SheetNames[0];

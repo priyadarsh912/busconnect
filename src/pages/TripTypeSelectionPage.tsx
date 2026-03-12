@@ -2,6 +2,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, Building2, Globe } from "lucide-react";
 import { motion } from "framer-motion";
 import PageShell from "@/components/PageShell";
+import { useLanguage } from "@/lib/language";
 
 const fadeUp = {
     initial: { opacity: 0, y: 24 },
@@ -12,40 +13,45 @@ const stagger = {
     animate: { transition: { staggerChildren: 0.12 } },
 };
 
-const tripTypes = [
-    {
-        id: "intercity",
-        label: "Intercity",
-        description: "Travel within nearby cities of the selected state.",
-        Icon: Building2,
-        gradient: "from-indigo-500 to-blue-600",
-        lightBg: "bg-indigo-50 dark:bg-indigo-950/40",
-        iconBg: "bg-indigo-100 dark:bg-indigo-900/60",
-        iconColor: "text-indigo-600 dark:text-indigo-400",
-        badge: "Short Distance  •  ≤ 35 km",
-        badgeColor: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300",
-    },
-    {
-        id: "outstation",
-        label: "Outstation",
-        description: "Travel to cities outside the state or long-distance routes.",
-        Icon: Globe,
-        gradient: "from-orange-500 to-rose-500",
-        lightBg: "bg-orange-50 dark:bg-orange-950/40",
-        iconBg: "bg-orange-100 dark:bg-orange-900/60",
-        iconColor: "text-orange-600 dark:text-orange-400",
-        badge: "Long Distance  •  > 35 km",
-        badgeColor: "bg-orange-100 text-orange-700 dark:bg-orange-900/60 dark:text-orange-300",
-    },
-];
-
 const TripTypeSelectionPage = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { t } = useLanguage();
     const selectedState: string = location.state?.state ?? "Unknown";
 
+    const tripTypes = [
+        {
+            id: "intercity",
+            label: t("tripType.intercityLabel"),
+            description: t("tripType.intercityDescription"),
+            Icon: Building2,
+            gradient: "from-indigo-500 to-blue-600",
+            lightBg: "bg-indigo-50 dark:bg-indigo-950/40",
+            iconBg: "bg-indigo-100 dark:bg-indigo-900/60",
+            iconColor: "text-indigo-600 dark:text-indigo-400",
+            badge: t("tripType.intercityBadge"),
+            badgeColor: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300",
+        },
+        {
+            id: "outstation",
+            label: t("tripType.outstationLabel"),
+            description: t("tripType.outstationDescription"),
+            Icon: Globe,
+            gradient: "from-orange-500 to-rose-500",
+            lightBg: "bg-orange-50 dark:bg-orange-950/40",
+            iconBg: "bg-orange-100 dark:bg-orange-900/60",
+            iconColor: "text-orange-600 dark:text-orange-400",
+            badge: t("tripType.outstationBadge"),
+            badgeColor: "bg-orange-100 text-orange-700 dark:bg-orange-900/60 dark:text-orange-300",
+        },
+    ];
+
     const handleSelect = (tripType: "intercity" | "outstation") => {
-        navigate("/route-search", { state: { state: selectedState, tripType } });
+        if (tripType === "outstation") {
+            navigate("/outstation-search", { state: { state: selectedState } });
+        } else {
+            navigate("/route-search", { state: { state: selectedState, tripType } });
+        }
     };
 
     return (
@@ -60,9 +66,9 @@ const TripTypeSelectionPage = () => {
                     <ArrowLeft className="w-4 h-4 text-foreground" />
                 </motion.button>
                 <div>
-                    <h1 className="text-xl font-extrabold leading-tight">Select Trip Type</h1>
+                    <h1 className="text-xl font-extrabold leading-tight">{t("tripType.title")}</h1>
                     <p className="text-xs text-muted-foreground mt-0.5 font-medium">
-                        {selectedState} &bull; Choose how you'd like to travel
+                        {t("tripType.subtitle", { state: selectedState })}
                     </p>
                 </div>
             </motion.div>
@@ -127,11 +133,8 @@ const TripTypeSelectionPage = () => {
             {/* Tip */}
             <motion.div variants={fadeUp} className="mt-8 rounded-xl bg-card border border-border p-4">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                    <span className="font-bold text-foreground">Tip:</span> Choose{" "}
-                    <span className="font-semibold text-indigo-600 dark:text-indigo-400">Intercity</span> for short, frequent
-                    city-to-city hops. Choose{" "}
-                    <span className="font-semibold text-orange-600 dark:text-orange-400">Outstation</span> for longer journeys
-                    across state borders.
+                    <span className="font-bold text-foreground">{t("tripType.tipLabel")}</span>{" "}
+                    {t("tripType.tipBody")}
                 </p>
             </motion.div>
         </PageShell>

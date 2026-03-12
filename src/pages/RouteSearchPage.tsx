@@ -8,6 +8,7 @@ import { useIntercityRoutes } from "@/hooks/useIntercityRoutes";
 import { useOutstationRoutes } from "@/hooks/useOutstationRoutes";
 import { RouteEntry } from "@/utils/ExcelLoader";
 import { OutstationRouteEntry } from "@/utils/OutstationLoader";
+import { RouteHistoryManager } from "../utils/RouteHistoryManager";
 
 const fadeUp = {
     initial: { opacity: 0, y: 20 },
@@ -17,12 +18,12 @@ const fadeUp = {
 const RouteSearchPage = () => {
     const navigate = useNavigate();
     const location = useLocation();
-    const selectedState: string = location.state?.state ?? "Chandigarh";
+    const selectedState: string = location.state?.state || localStorage.getItem("selectedState") || "Chandigarh";
     const tripType: "intercity" | "outstation" = location.state?.tripType ?? "intercity";
 
     // Hooks - separate engines
-    const intercity = useIntercityRoutes();
-    const outstation = useOutstationRoutes();
+    const intercity = useIntercityRoutes(selectedState);
+    const outstation = useOutstationRoutes(selectedState);
 
     const [allCities, setAllCities] = useState<string[]>([]);
     const [popularRoutes, setPopularRoutes] = useState<any[]>([]);
@@ -108,9 +109,23 @@ const RouteSearchPage = () => {
 
     const handleSearch = () => {
         if (!origin.trim() || !destination.trim()) return;
-        navigate("/routes", {
-            state: { state: selectedState, tripType, origin: origin.trim(), destination: destination.trim() },
-        });
+
+        // Track interaction
+        RouteHistoryManager.trackRoute({
+            route_id: `${origin.trim()}-${destination.trim()}`,
+            from_stop: origin.trim(),
+            to_stop: destination.trim()
+        }, tripType);
+
+        if (tripType === "intercity" && selectedState === "Chandigarh") {
+            navigate("/connecting-routes", {
+                state: { origin: origin.trim(), destination: destination.trim() },
+            });
+        } else {
+            navigate("/routes", {
+                state: { state: selectedState, tripType, origin: origin.trim(), destination: destination.trim() },
+            });
+        }
     };
 
     const accentColor = tripType === "intercity" ? "#4f46e5" : "#ea580c";

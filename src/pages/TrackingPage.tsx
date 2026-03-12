@@ -8,13 +8,17 @@ import {
   Clock,
   Users,
   Bus,
+  Zap,
 } from "lucide-react";
 import CrowdBadge from "@/components/CrowdBadge";
+import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
+import { MostUsedRoutes } from "@/components/MostUsedRoutes";
 import PageShell from "@/components/PageShell";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { useLanguage } from "@/lib/language";
 
 // Fix for default marker icon in Leaflet + bundlers
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
@@ -47,17 +51,87 @@ type Stop = {
 const TrackingPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { route, tripType } = location.state || {};
-  const from = tripType === "intercity" ? (route?.from_stop || "Sector 17") : (route?.start_stop || route?.start_city || "");
-  const to = tripType === "intercity" ? (route?.to_stop || "Phase 5") : (route?.end_stop || route?.end_city || "");
+  const { t } = useLanguage();
+  const [activeRoute, setActiveRoute] = useState<any>(location.state?.route || null);
+  const [activeTripType, setActiveTripType] = useState<string>(location.state?.tripType || "");
 
-  const rawViaStop = tripType === "intercity" ? (route?.stop || "") : (route?.stop_1 || route?.stop_city || "");
-  const rawViaStop2 = tripType === "outstation" ? (route?.stop_2 || "") : "";
+  const { predict: predictCrowd } = useCrowdPrediction();
+
+  const from = activeTripType === "intercity" ? (activeRoute?.from_stop || "Sector 17") : (activeRoute?.start_stop || activeRoute?.start_city || "");
+  const to = activeTripType === "intercity" ? (activeRoute?.to_stop || "Phase 5") : (activeRoute?.end_stop || activeRoute?.end_city || "");
+
+  const rawViaStop = activeTripType === "intercity" ? (activeRoute?.stop || "") : (activeRoute?.stop_1 || activeRoute?.stop_city || "");
+  const rawViaStop2 = activeTripType === "outstation" ? (activeRoute?.stop_2 || "") : "";
 
   // Validate intermediate stops based on predefined corridors to avoid impossible geography
   const validatedStops = validateStops(from, to, [rawViaStop, rawViaStop2]);
   const viaStop = validatedStops.length > 0 ? validatedStops[0] : "";
   const viaStop2 = validatedStops.length > 1 ? validatedStops[1] : "";
+
+  // Initial timeline placeholder to avoid empty box
+  useEffect(() => {
+    if (from && to) {
+      const now = new Date();
+      const formatTime = (date: Date) => date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const placeholders: Stop[] = [
+        { name: `${from}`, scheduledTime: formatTime(now), expectedTime: formatTime(now), distance: "0 km", progressAnchor: 0, isStart: true },
+        { name: `${to}`, scheduledTime: formatTime(new Date(now.getTime() + 45 * 60000)), expectedTime: formatTime(new Date(now.getTime() + 45 * 60000)), distance: "--- km", progressAnchor: 100, isTerminal: true },
+      ];
+      if (viaStop) {
+        placeholders.splice(1, 0, { name: viaStop, scheduledTime: formatTime(new Date(now.getTime() + 20 * 60000)), expectedTime: formatTime(new Date(now.getTime() + 20 * 60000)), distance: "--- km", progressAnchor: 50 });
+      }
+      setDynamicStops(placeholders);
+    }
+  }, [from, to, viaStop]);
+
+  // Update active route if location state changes (e.g. from MostUsedRoutes click)
+  useEffect(() => {
+    if (location.state?.route) {
+      setActiveRoute(location.state.route);
+      setActiveTripType(location.state.tripType || "intercity");
+    }
+  }, [location.state]);
+
+  // Auto-load most used route if none is provided
+  useEffect(() => {
+    if (!activeRoute) {
+      const historyJson = localStorage.getItem('user_route_history');
+      if (historyJson) {
+        const history = JSON.parse(historyJson);
+        if (history.length > 0) {
+          const topRoute = history[0];
+          setActiveRoute(topRoute.rawRouteData);
+          setActiveTripType(topRoute.tripType);
+        } else {
+           // Fallback to a featured route if no history
+           setActiveRoute({
+             route_id: 'ch-ph5-1',
+             from_stop: 'Sector 17',
+             to_stop: 'Phase 5',
+             stop: 'Phase 2',
+             distance_km: 8.5,
+             eta_minutes: 25,
+             current_lat: 30.7398,
+             current_lon: 76.7827
+           });
+           setActiveTripType('intercity');
+        }
+      } else {
+          // Absolute fallback for first time users
+           setActiveRoute({
+             route_id: 'ch-ph5-1',
+             from_stop: 'Sector 17',
+             to_stop: 'Phase 5',
+             stop: 'Phase 2',
+             distance_km: 8.5,
+             eta_minutes: 25,
+             current_lat: 30.7398,
+             current_lon: 76.7827
+           });
+           setActiveTripType('intercity');
+      }
+    }
+  }, [activeRoute]);
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -66,7 +140,7 @@ const TrackingPage = () => {
 
   const [distance, setDistance] = useState<string>("Calculating...");
   const [eta, setEta] = useState<string>("...");
-  const [etaMinutes, setEtaMinutes] = useState<number>(0);
+  const [etaMinutes, setEtaMinutes] = useState<number>(activeRoute?.eta_minutes || activeRoute?.etaMinutes || 25);
   const [isLoading, setIsLoading] = useState(true);
 
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
@@ -101,6 +175,16 @@ const TrackingPage = () => {
     "Phase 9": [30.6970, 76.7400],
     "Phase 11": [30.6865, 76.7470],
     "Sunny Enclave": [30.7135, 76.7000],
+    "Balongi": [30.7042, 76.7051],
+    "Kharar": [30.7483, 76.6414],
+    "Landran": [30.6865, 76.6667],
+    "Kurali": [30.8222, 76.5744],
+    "Sohana": [30.6853, 76.7215],
+    "Chhappar Chiri": [30.7032, 76.6715],
+    "ISBT 17": [30.7398, 76.7827],
+    "ISBT 43": [30.7250, 76.7460],
+    "PGI": [30.7670, 76.7770],
+    "Cantonment": [30.6900, 76.8500],
     // Punjab cities
     "Ludhiana": [30.9010, 75.8573],
     "Amritsar": [31.6340, 74.8723],
@@ -131,27 +215,43 @@ const TrackingPage = () => {
     "Shimla": [31.1048, 77.1734],
   };
 
-  // Helper to fetch coordinates from a city name using OpenStreetMap Nominatim or cache
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
   const getCoordinates = async (
-    city: string,
+    city: string
   ): Promise<[number, number] | null> => {
-    // Instant cache return for accurate MVP routing
-    if (CITY_COORDS[city]) {
-      return CITY_COORDS[city];
+    if (!city) return null;
+    const trimmedCity = city.trim();
+
+    // Cache check with normalization
+    const normalizedName = Object.keys(CITY_COORDS).find(
+      (k) =>
+        k.toLowerCase() === trimmedCity.toLowerCase() ||
+        trimmedCity.toLowerCase().includes(k.toLowerCase())
+    );
+
+    if (normalizedName) {
+      return CITY_COORDS[normalizedName];
     }
 
-    // Fallback Geocoding
-    try {
-      let query = city;
-      if (city.includes("Sector") || city.includes("IT Park")) query += ", Chandigarh";
-      if (city.includes("Phase")) query += ", Mohali";
+    // Robustness for Sector/Phase searches in Chandigarh
+    let searchQuery = trimmedCity;
+    const isIntercitySector = /^(Sector|Phase|Village|ISBT|IT Park)/i.test(trimmedCity);
+    if (isIntercitySector && !trimmedCity.toLowerCase().includes("chandigarh") && !trimmedCity.toLowerCase().includes("mohali")) {
+      searchQuery = `Chandigarh ${trimmedCity}`;
+    }
 
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`,
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+          searchQuery
+        )}&countrycodes=in&limit=1`
       );
-      const data = await res.json();
+      const data = await response.json();
       if (data && data.length > 0) {
-        return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+        const lat = parseFloat(data[0].lat);
+        const lon = parseFloat(data[0].lon);
+        return [lat, lon];
       }
       return null;
     } catch (err) {
@@ -170,36 +270,69 @@ const TrackingPage = () => {
     }
 
     // Initialize map with center on live bus position or fallback
-    const liveLat = route?.current_lat || route?.start_lat;
-    const liveLon = route?.current_lon || route?.start_lon;
+    const liveLat = activeRoute?.current_lat || activeRoute?.start_lat;
+    const liveLon = activeRoute?.current_lon || activeRoute?.start_lon;
     const initialCenter: [number, number] = liveLat && liveLon
       ? [liveLat, liveLon]
-      : route?.lat_from && route?.lon_from
-        ? [route.lat_from, route.lon_from]
+      : activeRoute?.lat_from && activeRoute?.lon_from
+        ? [activeRoute.lat_from, activeRoute.lon_from]
         : [30.7333, 76.7794];
 
     const mapInstance = L.map(container).setView(initialCenter, 14); // Zoom in closer for "Uber-like" feel
     map.current = mapInstance;
     routingLayer.current = L.layerGroup().addTo(mapInstance);
 
+    // Fix for mobile rendering
+    setTimeout(() => {
+      mapInstance.invalidateSize();
+    }, 300);
+
     // Add Free OpenStreetMap tiles
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
     }).addTo(mapInstance);
 
-    // Fetch and draw route
+    let isMounted = true;
+
+    // Fetch and draw activeRoute
     const drawRoute = async () => {
+      if (!isMounted) return;
       setIsLoading(true);
-      const fromCoords: [number, number] | null = route && route.lat_from ? [route.lat_from, route.lon_from] : await getCoordinates(from);
-      const toCoords: [number, number] | null = route && route.lat_to ? [route.lat_to, route.lon_to] : await getCoordinates(to);
-      const stopCoords: [number, number] | null = route && route.lat_stop ? [route.lat_stop, route.lon_stop] : (viaStop ? await getCoordinates(viaStop) : null);
-      const stop2Coords: [number, number] | null = viaStop2 ? await getCoordinates(viaStop2) : null;
+      // 1. Resolve coordinates for all points
+      const fromCoords: [number, number] | null = (activeRoute && activeRoute.start_lat && activeRoute.start_lon) ? [Number(activeRoute.start_lat), Number(activeRoute.start_lon)]
+        : (activeRoute && activeRoute.lat_from && activeRoute.lon_from) ? [Number(activeRoute.lat_from), Number(activeRoute.lon_from)]
+          : await getCoordinates(from);
+      if (!isMounted) return;
+
+      await sleep(1000); // Nominatim rate limit: 1 request/second
+      if (!isMounted) return;
+
+      const toCoords: [number, number] | null = (activeRoute && activeRoute.end_lat && activeRoute.end_lon) ? [Number(activeRoute.end_lat), Number(activeRoute.end_lon)]
+        : (activeRoute && activeRoute.lat_to && activeRoute.lon_to) ? [Number(activeRoute.lat_to), Number(activeRoute.lon_to)]
+          : await getCoordinates(to);
+      if (!isMounted) return;
+
+      let stopCoords: [number, number] | null = (activeRoute && activeRoute.lat_stop && activeRoute.lon_stop) ? [Number(activeRoute.lat_stop), Number(activeRoute.lon_stop)] : null;
+      if (!stopCoords && viaStop) {
+        await sleep(1000);
+        if (!isMounted) return;
+        stopCoords = await getCoordinates(viaStop);
+        if (!isMounted) return;
+      }
+
+      let stop2Coords: [number, number] | null = null;
+      if (viaStop2) {
+        await sleep(1000);
+        if (!isMounted) return;
+        stop2Coords = await getCoordinates(viaStop2);
+        if (!isMounted) return;
+      }
 
       if (fromCoords && toCoords) {
         try {
           // If we have a pre-computed full polyline from Radar, skip OSRM overhead entirely
-          if (route && route.full_polyline) {
-            const coords = route.full_polyline;
+          if (activeRoute && activeRoute.full_polyline) {
+            const coords = activeRoute.full_polyline;
             setRouteCoords(coords);
 
             const polyline = L.polyline(coords, {
@@ -235,8 +368,8 @@ const TrackingPage = () => {
             });
 
             // If we have current position from radar, use it, else start of line
-            const busStartCoords = (route.current_lat && route.current_lon)
-              ? [route.current_lat, route.current_lon] as [number, number]
+            const busStartCoords = (activeRoute.current_lat && activeRoute.current_lon)
+              ? [activeRoute.current_lat, activeRoute.current_lon] as [number, number]
               : coords[0];
 
             busMarkerRef.current = L.marker(busStartCoords, { icon: busIcon })
@@ -247,9 +380,9 @@ const TrackingPage = () => {
             // Keep map firmly focused on the bus
             mapInstance.setView(busStartCoords, 14);
 
-            setDistance((route.distance_km || 10).toFixed(1) + " km");
-            setEtaMinutes(route.etaMinutes || 0);
-            setEta((route.etaMinutes || 0) + " mins");
+            setDistance((activeRoute.distance_km || 10).toFixed(1) + " km");
+            setEtaMinutes(activeRoute.etaMinutes || activeRoute.eta_min || 0);
+            setEta((activeRoute.etaMinutes || activeRoute.eta_min || 0) + " mins");
 
             // Set dynamic stops mock
             const now = new Date();
@@ -276,18 +409,20 @@ const TrackingPage = () => {
           const res = await fetch(
             `https://router.project-osrm.org/route/v1/driving/${waypoints}?overview=full&geometries=geojson&steps=true`,
           );
+          if (!isMounted) return;
           const routeData = await res.json();
+          if (!isMounted) return;
 
           if (routeData.code === "Ok" && routeData.routes.length > 0) {
             const osrmRoute = routeData.routes[0];
 
-            // Set Distance & ETA state correctly utilizing osrmRoute distance, not the outer route
+            // Set Distance & ETA state correctly utilizing osrmRoute distance, not the outer activeRoute
             setDistance((osrmRoute.distance / 1000).toFixed(1) + " km");
             const mins = Math.round(osrmRoute.duration / 60);
             setEtaMinutes(mins);
             setEta(mins + " mins");
 
-            // Draw route on map using L.geoJSON to exactly follow the road geometry
+            // Draw activeRoute on map using L.geoJSON to exactly follow the road geometry
             const geoJsonLayer = L.geoJSON(osrmRoute.geometry, {
               style: {
                 color: "#2563EB",
@@ -345,42 +480,75 @@ const TrackingPage = () => {
                 minute: "2-digit",
               });
 
-            const steps = osrmRoute.legs?.[0]?.steps || [];
+            const legs = osrmRoute.legs || [];
             let accumulatedDistance = 0;
             let accumulatedDuration = 0;
-            let nextTarget = osrmRoute.distance / 5;
             const intermediateStops: Stop[] = [];
 
-            for (const step of steps) {
-              accumulatedDistance += step.distance;
-              accumulatedDuration += step.duration;
+            // Helper to get stop name for a waypoint index
+            const getStopNameForLegEnd = (legIndex: number) => {
+              if (legIndex === 0 && viaStop) return viaStop;
+              if (legIndex === 1 && viaStop2) return viaStop2;
+              return null;
+            };
 
-              if (
-                accumulatedDistance >= nextTarget &&
-                intermediateStops.length < 4
-              ) {
+            for (let i = 0; i < legs.length; i++) {
+              const leg = legs[i];
+              const steps = leg.steps || [];
+
+              for (const step of steps) {
+                accumulatedDistance += step.distance;
+                accumulatedDuration += step.duration;
+
+                // Only add "discovered" steps if we don't have enough stops and it's a long segment
+                const nextDiscoveryDistance = osrmRoute.distance / 4;
+                const lastStopDistance = intermediateStops.length > 0
+                  ? parseFloat(intermediateStops[intermediateStops.length - 1].distance) * 1000
+                  : 0;
+
                 if (
-                  step.name &&
-                  step.name.length > 2 &&
-                  !step.name.toLowerCase().includes("roundabout") &&
-                  !step.name.toLowerCase().includes("turn")
+                  accumulatedDistance - lastStopDistance >= nextDiscoveryDistance &&
+                  intermediateStops.length < 5 &&
+                  i === legs.length - 1 // Only add extra stops in the final leg to keep timeline clean
                 ) {
-                  const progressPct =
-                    (accumulatedDistance / osrmRoute.distance) * 100;
-                  const timeAtStop = new Date(
-                    now.getTime() + accumulatedDuration * 1000,
-                  );
+                  if (
+                    step.name &&
+                    step.name.length > 2 &&
+                    !step.name.toLowerCase().includes("roundabout") &&
+                    !step.name.toLowerCase().includes("turn")
+                  ) {
+                    const progressPct = (accumulatedDistance / osrmRoute.distance) * 100;
+                    const timeAtStop = new Date(now.getTime() + accumulatedDuration * 1000);
 
+                    intermediateStops.push({
+                      name: step.name,
+                      scheduledTime: formatTime(timeAtStop),
+                      expectedTime: formatTime(new Date(timeAtStop.getTime() + 2 * 60000)),
+                      distance: (accumulatedDistance / 1000).toFixed(1) + " km",
+                      progressAnchor: progressPct,
+                    });
+                  }
+                }
+              }
+
+              // At the end of each leg (except the last or if manually geocoded), 
+              // we add the waypoint stop if it's one of ours
+              const waypointName = getStopNameForLegEnd(i);
+              if (waypointName && i < legs.length - 1) {
+                const progressPct = (accumulatedDistance / osrmRoute.distance) * 100;
+                const timeAtStop = new Date(now.getTime() + accumulatedDuration * 1000);
+
+                // Check if we already added a stop very close to this one
+                const alreadyAdded = intermediateStops.some(s => s.name === waypointName);
+
+                if (!alreadyAdded) {
                   intermediateStops.push({
-                    name: intermediateStops.length === 0 && viaStop ? viaStop : step.name,
+                    name: waypointName,
                     scheduledTime: formatTime(timeAtStop),
-                    expectedTime: formatTime(
-                      new Date(timeAtStop.getTime() + 2 * 60000),
-                    ), // Simulate 2 min delay
+                    expectedTime: formatTime(new Date(timeAtStop.getTime() + 2 * 60000)),
                     distance: (accumulatedDistance / 1000).toFixed(1) + " km",
                     progressAnchor: progressPct,
                   });
-                  nextTarget = accumulatedDistance + osrmRoute.distance / 5;
                 }
               }
             }
@@ -394,7 +562,7 @@ const TrackingPage = () => {
                 progressAnchor: 0,
                 isStart: true,
               },
-              ...intermediateStops,
+              ...intermediateStops.sort((a, b) => a.progressAnchor - b.progressAnchor),
               {
                 name: `${to} Stop`,
                 scheduledTime: formatTime(
@@ -412,6 +580,22 @@ const TrackingPage = () => {
             setDynamicStops(finalStops);
 
             mapInstance.fitBounds(geoJsonLayer.getBounds(), { padding: [30, 30] });
+          } else {
+            // FALLBACK DRAWING if OSRM fails
+            console.warn("OSRM failed, using straight-line polyline fallback");
+            const fallbackPoints: [number, number][] = [fromCoords];
+            if (stopCoords) fallbackPoints.push(stopCoords);
+            if (stop2Coords) fallbackPoints.push(stop2Coords);
+            fallbackPoints.push(toCoords);
+
+            const polyline = L.polyline(fallbackPoints, {
+              color: "#3b82f6",
+              weight: 5,
+              opacity: 0.8,
+              dashArray: "10, 10",
+            }).addTo(mapInstance);
+
+            mapInstance.fitBounds(polyline.getBounds(), { padding: [30, 30] });
           }
         } catch (err) {
           console.error("Routing failed, falling back to simple polyline", err);
@@ -451,6 +635,13 @@ const TrackingPage = () => {
             .bindTooltip("Live Bus Position");
 
           mapInstance.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+
+          // Set fallback ETA and distance so animation and status work
+          const fallbackDistance = activeRoute?.distance_km || 10;
+          const fallbackEta = activeRoute?.etaMinutes || 30;
+          setDistance(fallbackDistance.toFixed(1) + " km");
+          setEtaMinutes(fallbackEta);
+          setEta(fallbackEta + " mins");
 
           // Fallback UI timeline for when OSRM fails
           const formatTime = (date: Date) =>
@@ -504,11 +695,12 @@ const TrackingPage = () => {
     drawRoute();
 
     return () => {
+      isMounted = false;
       mapInstance.remove();
       map.current = null;
       routingLayer.current = null;
     };
-  }, [from, to]);
+  }, [from, to, viaStop, viaStop2]);
 
   // Animation effect
   useEffect(() => {
@@ -525,7 +717,7 @@ const TrackingPage = () => {
         // Calculate total route distance in meters if possible
         // For simplicity, we'll still use the 0-100 progress but scale it by real-world duration
         // Total distance is route.distance_km * 1000
-        const totalDistanceMeters = (route?.distance_km || 10) * 1000;
+        const totalDistanceMeters = (activeRoute?.distance_km || 10) * 1000;
         const progressIncrement = (distanceToMovePerUpdate / totalDistanceMeters) * 100;
 
         const next = Math.min(prev + progressIncrement, 100);
@@ -556,12 +748,24 @@ const TrackingPage = () => {
   const [dataError, setDataError] = useState(false);
 
   useEffect(() => {
-    if (tripType === "intercity") {
-      if (!isValidCoord(route?.lat_from, route?.lon_from) || !isValidCoord(route?.lat_to, route?.lon_to)) {
-        setDataError(true);
+    if (activeRoute && activeTripType === "intercity") {
+      const latFrom = Number(activeRoute?.lat_from || activeRoute?.start_lat);
+      const lonFrom = Number(activeRoute?.lon_from || activeRoute?.start_lon);
+      const latTo = Number(activeRoute?.lat_to || activeRoute?.end_lat);
+      const lonTo = Number(activeRoute?.lon_to || activeRoute?.end_lon);
+
+      if (!isValidCoord(latFrom, lonFrom) || !isValidCoord(latTo, lonTo)) {
+        // Only set error if we don't even have stop names to geocode
+        if (!from || !to) {
+          setDataError(true);
+        }
+      } else {
+        setDataError(false);
       }
+    } else {
+      setDataError(false);
     }
-  }, [route, tripType]);
+  }, [activeRoute, activeTripType, from, to]);
 
   if (dataError) {
     return (
@@ -575,16 +779,16 @@ const TrackingPage = () => {
           <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center mb-4">
             <MapPin className="w-8 h-8 text-muted-foreground opacity-40" />
           </div>
-          <h2 className="text-lg font-bold text-foreground mb-2">Route data unavailable</h2>
+          <h2 className="text-lg font-bold text-foreground mb-2">{t("tracking.routeDataUnavailable")}</h2>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Precise tracking coordinates for this Chandigarh region route are currently missing.
+            {t("tracking.preciseTrackingMissing")}
           </p>
           <Button
             variant="outline"
             className="mt-6 rounded-xl"
             onClick={() => navigate(-1)}
           >
-            Return to Routes
+            {t("tracking.returnToRoutes")}
           </Button>
         </div>
       </PageShell>
@@ -599,7 +803,7 @@ const TrackingPage = () => {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="text-center">
-          <h1 className="font-bold text-base">Tracking Route</h1>
+          <h1 className="font-bold text-base">{t("tracking.title")}</h1>
           <p className="text-xs text-crowd-low font-medium">
             {from} → {viaStop ? viaStop + " → " : ""}{to}
           </p>
@@ -616,32 +820,48 @@ const TrackingPage = () => {
 
       {/* Info panel */}
       <div className="px-4 pt-5 space-y-6 pb-20">
+        {!location.state?.route && !localStorage.getItem('user_route_history') && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-2 animate-in fade-in slide-in-from-top-4">
+             <div className="flex items-center gap-3 mb-2">
+               <Zap className="w-5 h-5 text-blue-600 fill-blue-600" />
+               <p className="text-sm font-bold text-blue-900">{t("tracking.getStarted")}</p>
+             </div>
+             <p className="text-xs text-blue-700 leading-relaxed mb-3">
+               {t("tracking.getStartedBody")}
+             </p>
+          </div>
+        )}
+
+        {/* Popular Routes Section - Always visible if no specific route was selected to come here */}
+        <MostUsedRoutes currentRouteId={location.state?.route ? (activeRoute?.route_id || activeRoute?.route_no) : undefined} />
+
         {/* Top Status Cards Grid */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid grid-cols-2 gap-3 transition-opacity duration-300 ${!activeRoute ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
           {/* Current Status */}
           <div className="bg-card border border-border rounded-xl p-3 shadow-sm flex flex-col justify-center">
             <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-1">
-              CURRENT STATUS
+              {t("tracking.currentStatus")}
             </p>
             <div className="flex items-center gap-1.5 mb-1.5">
               <div className="w-2.5 h-2.5 rounded-full bg-crowd-low relative">
                 <div className="absolute inset-0 bg-crowd-low rounded-full animate-ping opacity-75" />
               </div>
-              <p className="font-bold text-sm leading-none">On Time</p>
+              <p className="font-bold text-sm leading-none">{t("tracking.onTime")}</p>
             </div>
-            <p className="text-[10px] text-crowd-low font-medium">
-              No delays reported
-            </p>
+            {(() => {
+              const prediction = predictCrowd(from, to);
+              return <CrowdBadge level={prediction.level} score={prediction.percentage} />;
+            })()}
           </div>
 
           {/* Next Stop */}
           <div className="bg-card border border-border rounded-xl p-3 shadow-sm flex flex-col justify-center">
             <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-1">
-              NEXT STOP
+              {t("tracking.nextStop")}
             </p>
             {isLoading ? (
               <p className="font-bold text-sm mb-1 text-muted-foreground animate-pulse">
-                Calculating...
+                {t("tracking.calculating")}
               </p>
             ) : (
               (() => {
@@ -664,7 +884,7 @@ const TrackingPage = () => {
                       {nextStop?.name || to}
                     </p>
                     <p className="text-[10px] text-primary font-medium">
-                      Arriving in {timeRemaining} mins
+                      {t("tracking.arrivingIn", { minutes: timeRemaining })}
                     </p>
                   </>
                 );
@@ -676,7 +896,7 @@ const TrackingPage = () => {
         {/* Route Timeline */}
         <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
           <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4 ml-[73px]">
-            ROUTE TIMELINE
+            {t("tracking.routeTimeline")}
           </h3>
 
           <div className="relative">
@@ -752,6 +972,7 @@ const TrackingPage = () => {
             </div>
           </div>
         </div>
+
       </div>
     </PageShell>
   );

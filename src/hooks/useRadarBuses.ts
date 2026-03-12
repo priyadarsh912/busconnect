@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { loadRadarBuses, RadarBus } from '../utils/RadarLoader';
+import { RadarBus } from '../utils/RadarLoader';
+import { getRoutesForState } from '../data/stateDatasets';
 
 // Helper to calculate distance between two coordinates in km (Haversine formula)
 const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
@@ -37,6 +38,22 @@ const CITY_COORDS: Record<string, [number, number]> = {
     "Sector 17": [30.7398, 76.7827],
     "Sector 35": [30.7285, 76.7562],
     "Sector 43": [30.7250, 76.7460],
+
+    // Delhi & UP Cities
+    "Delhi": [28.6139, 77.2090],
+    "New Delhi": [28.6139, 77.2090],
+    "ISBT Kashmiri Gate": [28.6665, 77.2285],
+    "Anand Vihar": [28.6468, 77.3160],
+    "Lucknow": [26.8467, 80.9462],
+    "Kanpur": [26.4499, 80.3319],
+    "Varanasi": [25.3176, 82.9739],
+    "Agra": [27.1767, 78.0081],
+    "Noida": [28.5355, 77.3910],
+    "Ghaziabad": [28.6692, 77.4538],
+    "Haridwar": [29.9457, 78.1642],
+    "Meerut": [28.9845, 77.7064],
+    "Allahabad": [25.4358, 81.8463],
+    "Bareilly": [28.3670, 79.4304],
 };
 
 const polylineCache: Record<string, [number, number][]> = {};
@@ -73,16 +90,20 @@ export interface RadarBusWithMovement extends RadarBus {
     full_polyline: [number, number][];
 }
 
-export const useRadarBuses = (userLocation: [number, number] | null) => {
+export type RadarRange = 'short' | 'long' | 'all';
+
+export const useRadarBuses = (userLocation: [number, number] | null, range: RadarRange = 'all') => {
     const [buses, setBuses] = useState<RadarBusWithMovement[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+    const locationKey = userLocation ? `${userLocation[0].toFixed(4)}:${userLocation[1].toFixed(4)}` : 'fallback';
 
     // Initial load and polyline generation
     useEffect(() => {
         const load = async () => {
             setIsLoading(true);
-            const data = await loadRadarBuses();
+            const selectedState = localStorage.getItem("selectedState") || "Chandigarh";
+            const data = await getRoutesForState(selectedState);
 
             // Limit to top 40 for performance
             const targetBuses = data.slice(0, 40);
@@ -130,7 +151,7 @@ export const useRadarBuses = (userLocation: [number, number] | null) => {
             }
         };
         load();
-    }, [userLocation === null]); // Reload if user location goes from null -> actual
+    }, [locationKey]);
 
     const updateMovement = useCallback(() => {
         if (!userLocation || buses.length === 0) return;
@@ -226,8 +247,16 @@ export const useRadarBuses = (userLocation: [number, number] | null) => {
     }, [updateMovement]);
 
     const nearbyBusesRaw = buses
-        .filter(b => b.distanceToUser <= 35)
         .filter(b => {
+            if (range === 'short') {
+                return b.distanceToUser >= 3 && b.distanceToUser <= 5;
+            } else if (range === 'long') {
+                return b.distanceToUser >= 10 && b.distanceToUser <= 15;
+            }
+            return b.distanceToUser <= 35;
+        })
+        .filter(b => {
+            if (!userLocation) return true;
             // Apply 2km rule for Private Volvo buses
             if (b.operator === 'Private Volvo') {
                 const stops = [b.start_stop, b.stop_1, b.stop_2, b.end_stop];

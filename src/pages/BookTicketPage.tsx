@@ -16,6 +16,9 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import CrowdBadge from "@/components/CrowdBadge";
+import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
+import { RouteHistoryManager } from "../utils/RouteHistoryManager";
 import PageShell from "@/components/PageShell";
 import { toast } from "sonner";
 
@@ -31,13 +34,16 @@ const BookTicketPage = () => {
         eta,
         distance_km,
         price,
-        bus_type
+        bus_type,
+        selectedSeats,
+        passengers: initialPassengers
     } = location.state || {};
+    const { predict: predictCrowd } = useCrowdPrediction();
 
     const [bookingMode, setBookingMode] = useState<"online" | "offline">("online");
     const [passengerName, setPassengerName] = useState("");
     const [mobileNumber, setMobileNumber] = useState("");
-    const [seats, setSeats] = useState(1);
+    const [seats, setSeats] = useState(initialPassengers || 1);
     const [paymentMethod, setPaymentMethod] = useState<string | null>(null);
 
     const handleConfirmBooking = () => {
@@ -55,8 +61,18 @@ const BookTicketPage = () => {
                 price_inr: price * seats,
                 departure: "Scheduled", // Placeholder
             },
-            passengers: seats
+            passengers: seats,
+            selectedSeats
         };
+
+        // Track interaction
+        RouteHistoryManager.trackRoute({
+            route_id: route_id,
+            from_stop: origin,
+            to_stop: destination,
+            operator: operator,
+            price_inr: price
+        }, 'outstation');
 
         if (paymentMethod === "upi") {
             navigate("/payment/upi", { state: bookingState });
@@ -111,6 +127,10 @@ const BookTicketPage = () => {
                                 <div className="text-right">
                                     <p className="text-xl font-black text-blue-600 dark:text-blue-400">₹{price || "250"}</p>
                                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PER SEAT</p>
+                                    {(() => {
+                                        const prediction = predictCrowd(origin || "", destination || "");
+                                        return <CrowdBadge level={prediction.level} score={prediction.percentage} className="mt-1" />;
+                                    })()}
                                 </div>
                             </div>
 
@@ -215,6 +235,13 @@ const BookTicketPage = () => {
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Required Seats</label>
+                                                    {selectedSeats ? (
+                                                        <div className="flex items-center bg-slate-50 dark:bg-slate-800 rounded-xl overflow-hidden h-[46px] px-4">
+                                                            <span className="text-sm font-bold truncate text-slate-800 dark:text-slate-200">
+                                                                {selectedSeats.join(', ')}
+                                                            </span>
+                                                        </div>
+                                                    ) : (
                                                     <div className="flex items-center bg-slate-50 dark:bg-slate-800 rounded-xl overflow-hidden h-[46px]">
                                                         <button
                                                             onClick={() => setSeats(Math.max(1, seats - 1))}
@@ -230,6 +257,7 @@ const BookTicketPage = () => {
                                                             <span className="text-xl font-bold">+</span>
                                                         </button>
                                                     </div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>

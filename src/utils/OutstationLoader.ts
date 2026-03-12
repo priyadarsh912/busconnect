@@ -14,7 +14,7 @@ export type OutstationRouteEntry = {
 
 export const loadOutstationRoutes = async (): Promise<OutstationRouteEntry[]> => {
     try {
-        const response = await fetch('/outstation_routes.json');
+        const response = await fetch('/datasets/outstation_routes.json');
         if (!response.ok) throw new Error('Failed to fetch outstation dataset');
 
         const data: OutstationRouteEntry[] = await response.json();

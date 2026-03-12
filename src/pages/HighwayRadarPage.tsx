@@ -8,8 +8,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { format, addMinutes } from "date-fns";
 import PageShell from "@/components/PageShell";
 import * as XLSX from 'xlsx';
-import { useRadarBuses } from "@/hooks/useRadarBuses";
+import { useRadarBuses, RadarRange } from "@/hooks/useRadarBuses";
 import { RadarBus, loadRadarBuses } from "@/utils/RadarLoader";
+import { loadCrowdHistory, predictCrowdSync } from "@/utils/CrowdPredictionEngine";
+import { RouteHistoryManager } from "../utils/RouteHistoryManager";
+import { useLanguage } from "@/lib/language";
 
 // --- Types ---
 type EnrichedRoute = RadarBus & {
@@ -32,6 +35,12 @@ type ConnectingRoute = {
     totalFare: number;
     transferWait: number;
     transferStop: string;
+};
+
+const RANGE_VIEW_CONFIG: Record<RadarRange, { radiusMeters: number; zoom: number }> = {
+    all: { radiusMeters: 35000, zoom: 10 },
+    short: { radiusMeters: 5000, zoom: 13 },
+    long: { radiusMeters: 15000, zoom: 11 },
 };
 
 // --- City & Stop Coordinates ---
@@ -73,7 +82,29 @@ const CITY_COORDS: Record<string, [number, number]> = {
     "Phase 7": [30.7230, 76.7328],
     "Phase 8": [30.7180, 76.7340],
     "Phase 9": [30.6970, 76.7400],
-    "Phase 11": [30.6865, 76.7470]
+    "Phase 11": [30.6865, 76.7470],
+    "Balongi": [30.7042, 76.7051],
+    "Kharar": [30.7483, 76.6414],
+    "Landran": [30.6865, 76.6667],
+    "Kurali": [30.8222, 76.5744],
+    "Sohana": [30.6853, 76.7215],
+    "Chhappar Chiri": [30.7032, 76.6715],
+
+    // Delhi & UP Cities
+    "Delhi": [28.6139, 77.2090],
+    "New Delhi": [28.6139, 77.2090],
+    "ISBT Kashmiri Gate": [28.6665, 77.2285],
+    "Anand Vihar": [28.6468, 77.3160],
+    "Lucknow": [26.8467, 80.9462],
+    "Kanpur": [26.4499, 80.3319],
+    "Varanasi": [25.3176, 82.9739],
+    "Agra": [27.1767, 78.0081],
+    "Noida": [28.5355, 77.3910],
+    "Ghaziabad": [28.6692, 77.4538],
+    "Haridwar": [29.9457, 78.1642],
+    "Meerut": [28.9845, 77.7064],
+    "Allahabad": [25.4358, 81.8463],
+    "Bareilly": [28.3670, 79.4304],
 };
 
 const CITY_NAMES = Object.keys(CITY_COORDS);
@@ -98,7 +129,17 @@ const hashStr = (s: string): number => {
     return Math.abs(hash);
 };
 
-const getCrowdLevel = (distance: number): CrowdLevel => {
+const getCrowdLevel = (distance: number, from?: string, to?: string): CrowdLevel => {
+    // Use prediction engine if historical data is loaded
+    if (from && to) {
+        const result = predictCrowdSync({ origin: from, destination: to });
+        if (result) {
+            if (result.level === "high") return "High";
+            if (result.level === "medium") return "Moderate";
+            return "Low";
+        }
+    }
+    // Fallback to distance-based
     if (distance < 100) return "High";
     if (distance < 200) return "Moderate";
     return "Low";
@@ -169,6 +210,8 @@ const renderBusPopupHtml = (busId: string, operator: string, to: string, highway
 // --- Component ---
 const HighwayRadarPage = () => {
     const navigate = useNavigate();
+    const { t } = useLanguage();
+    const fallbackCoords: [number, number] = [30.7333, 76.7794];
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<L.Map | null>(null);
     const markerLayerGroup = useRef<L.LayerGroup | null>(null);
@@ -178,20 +221,28 @@ const HighwayRadarPage = () => {
     const userMarkerRef = useRef<L.Marker | null>(null);
     const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const allRoutesRef = useRef<BusRoute[]>([]);
-    const userCoordsRef = useRef<[number, number]>([30.7333, 76.7794]);
+    const userCoordsRef = useRef<[number, number]>(fallbackCoords);
 
     const [isLoading, setIsLoading] = useState(true);
+    const [userLocation, setUserLocation] = useState<[number, number]>(fallbackCoords);
+    const [range, setRange] = useState<RadarRange>('all');
 
     // --- Radar Hook ---
-    const { nearbyBuses, isLoading: isRadarLoading, lastRefresh } = useRadarBuses(userCoordsRef.current);
+    const { nearbyBuses, isLoading: isRadarLoading, lastRefresh } = useRadarBuses(userLocation, range);
 
     // Init map
     useEffect(() => {
         if (!mapContainer.current || map.current) return;
 
-        const fallback: [number, number] = [30.7333, 76.7794];
+        const fallback: [number, number] = fallbackCoords;
         userCoordsRef.current = fallback;
+        setUserLocation(fallback);
         const m = L.map(mapContainer.current, { zoomControl: false }).setView(fallback, 10);
+
+        // Fix for mobile rendering
+        setTimeout(() => {
+            m.invalidateSize();
+        }, 300);
         map.current = m;
 
         markerLayerGroup.current = L.layerGroup().addTo(m);
@@ -234,6 +285,7 @@ const HighwayRadarPage = () => {
                     (pos) => {
                         const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
                         userCoordsRef.current = coords;
+                        setUserLocation(coords);
                         m.flyTo(coords, 12, { duration: 1.5 });
                         userMarkerRef.current?.setLatLng(coords);
                         radarCircleRef.current?.setLatLng(coords);
@@ -298,14 +350,18 @@ const HighwayRadarPage = () => {
         };
 
         loadData();
+        // Preload crowd history for prediction engine
+        loadCrowdHistory();
     }, []);
 
     // ── Draw nearby buses (from hook) ─────────────────────────────
     useEffect(() => {
-        if (!markerLayerGroup.current || nearbyBuses.length === 0 || !map.current) return;
+        if (!markerLayerGroup.current || !map.current) return;
 
         markerLayerGroup.current.clearLayers();
         routeLineGroup.current?.clearLayers();
+
+        if (nearbyBuses.length === 0) return;
 
         nearbyBuses.forEach((bus: any) => {
             const operator = bus.operator;
@@ -372,6 +428,10 @@ const HighwayRadarPage = () => {
                             arrivalTime: addMinutes(new Date(), eta),
                             fare: bus.price_inr,
                         };
+
+                        // Track interaction
+                        RouteHistoryManager.trackRoute(clickedRoute, 'outstation');
+
                         navigate('/tracking', { state: { route: clickedRoute, tripType: "outstation" } });
                     };
                 }
@@ -380,7 +440,7 @@ const HighwayRadarPage = () => {
                 const bookBtn = document.getElementById(`book-btn-${bus.route_id}`);
                 if (bookBtn) {
                     bookBtn.onclick = () => {
-                        navigate("/book-ticket", {
+                        navigate("/seat-selection", {
                             state: {
                                 route_id: bus.route_id,
                                 operator: bus.operator,
@@ -393,6 +453,9 @@ const HighwayRadarPage = () => {
                                 bus_type: "Outstation AC"
                             }
                         });
+
+                        // Track interaction
+                        RouteHistoryManager.trackRoute(bus, 'outstation');
                     };
                 }
             });
@@ -402,6 +465,29 @@ const HighwayRadarPage = () => {
             });
         });
     }, [nearbyBuses, navigate]);
+
+    useEffect(() => {
+        if (!map.current || !userLocation) return;
+
+        const viewConfig = RANGE_VIEW_CONFIG[range];
+        radarCircleRef.current?.setLatLng(userLocation);
+        radarCircleRef.current?.setRadius(viewConfig.radiusMeters);
+
+        const bounds = L.latLngBounds([userLocation]);
+        nearbyBuses.forEach((bus) => {
+            bounds.extend([bus.current_lat || bus.start_lat, bus.current_lon || bus.start_lon]);
+        });
+
+        if (nearbyBuses.length > 0) {
+            map.current.fitBounds(bounds, {
+                padding: [48, 48],
+                maxZoom: viewConfig.zoom,
+            });
+            return;
+        }
+
+        map.current.flyTo(userLocation, viewConfig.zoom, { duration: 0.6 });
+    }, [nearbyBuses, range, userLocation]);
 
 
     const startRadarPulse = useCallback((coords: [number, number]) => {
@@ -491,26 +577,49 @@ const HighwayRadarPage = () => {
                             </Link>
 
                             <div className="flex-1 text-center px-4">
-                                <h1 className="text-xl font-black text-neutral-900 tracking-tight leading-none">Highway Radar</h1>
-                                <p className="text-[11px] font-bold text-blue-600 uppercase tracking-widest mt-1">Nearby long-distance buses</p>
+                                <h1 className="text-xl font-black text-neutral-900 tracking-tight leading-none">{t("radar.title")}</h1>
+                                <p className="text-[11px] font-bold text-blue-600 uppercase tracking-widest mt-1">{t("radar.subtitle")}</p>
                             </div>
 
                             <button
                                 onClick={() => {
-                                    if (!navigator.geolocation) { alert("Location not supported."); return; }
+                                    if (!navigator.geolocation) { alert(t("radar.locationNotSupported")); return; }
                                     navigator.geolocation.getCurrentPosition((pos) => {
                                         const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
                                         userCoordsRef.current = coords;
+                                        setUserLocation(coords);
                                         map.current?.flyTo(coords, 13);
                                         userMarkerRef.current?.setLatLng(coords);
                                         radarCircleRef.current?.setLatLng(coords);
                                         startRadarPulse(coords);
-                                    }, () => { alert("Could not get location."); }, { enableHighAccuracy: true, timeout: 10000 });
+                                    }, () => { alert(t("radar.locationUnavailable")); }, { enableHighAccuracy: true, timeout: 10000 });
                                 }}
                                 className="w-10 h-10 bg-white/95 backdrop-blur-xl rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-all text-neutral-800 border border-neutral-100"
                             >
                                 <MapPin className="w-5 h-5" />
                             </button>
+                        </div>
+
+                        {/* Range Selection Controls */}
+                        <div className="bg-white/90 backdrop-blur-md rounded-2xl p-2 shadow-xl border border-white/50 pointer-events-auto flex items-center justify-between gap-1">
+                            {[
+                                { id: 'all', label: t("radar.all"), icon: <RadarIcon className="w-3.5 h-3.5" /> },
+                                { id: 'short', label: t("radar.short"), icon: <Clock className="w-3.5 h-3.5" /> },
+                                { id: 'long', label: t("radar.long"), icon: <Bus className="w-3.5 h-3.5" /> }
+                            ].map((opt) => (
+                                <button
+                                    key={opt.id}
+                                    onClick={() => setRange(opt.id as RadarRange)}
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition-all ${
+                                        range === opt.id 
+                                            ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 scale-[1.02]' 
+                                            : 'text-neutral-600 hover:bg-neutral-100'
+                                    }`}
+                                >
+                                    {opt.icon}
+                                    {opt.label}
+                                </button>
+                            ))}
                         </div>
                     </div>
                 </div>

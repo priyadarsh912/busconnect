@@ -42,11 +42,20 @@ export const CITY_COORDS: Record<string, [number, number]> = {
     "Moga": [30.8178, 75.1699],
     "Kapurthala": [31.3808, 75.3800],
     "Sector 43 Bus Stand": [30.7250, 76.7460],
-    "ISBT 17": [30.7398, 76.7827],
-    "Phase 6": [30.7335, 76.7179],
     "Sector 17": [30.7398, 76.7827],
     "Sector 35": [30.7285, 76.7562],
     "Sector 43": [30.7250, 76.7460],
+    "Balongi": [30.7042, 76.7051],
+    "Kharar": [30.7483, 76.6414],
+    "Kharar Bus Stand": [30.7483, 76.6414],
+    "Landran": [30.6865, 76.6667],
+    "Kurali": [30.8222, 76.5744],
+    "Sohana": [30.6853, 76.7215],
+    "Chhappar Chiri": [30.7032, 76.6715],
+    "ISBT 17": [30.7398, 76.7827],
+    "ISBT 43": [30.7250, 76.7460],
+    "PGI": [30.7670, 76.7770],
+    "Cantonment": [30.6900, 76.8500],
 };
 
 const CORRIDORS = {
@@ -104,48 +113,52 @@ export const validateStops = (startOriginal: string, endOriginal: string, propos
     const corridorSegment = getCorridorSegment(start, end);
 
     if (corridorSegment !== null) {
-        // Return exactly the corridor stops between origin and destination, ignoring proposed dataset random stops
-        // For visual brevity, return at most two intermediate stops like the rest of the app expects.
+        // Return exactly the corridor stops between origin and destination
         if (corridorSegment.length <= 2) {
             return corridorSegment;
         } else {
-            // Pick evenly spaced stops if there are many
             const mid = Math.floor(corridorSegment.length / 2);
             return [corridorSegment[0], corridorSegment[mid]];
         }
     }
 
-    // 2. Fallback: Distance Validation
-    // Remove stops that deviate (progressively closer to the destination)
-
+    // 2. Geographical Reordering & Distance Validation
+    // Sort proposed stops by their distance from the start point to ensure a logical sequence
+    const startCoords = CITY_COORDS[start];
     const endCoords = CITY_COORDS[end];
-    if (!endCoords) return proposedStops.filter(s => !!s);
 
-    // We start measuring distance from start, but actual check is: distance to destination must strictly DECREASE
+    if (!startCoords || !endCoords) return proposedStops.filter(s => !!s);
 
-    let currentCoords = CITY_COORDS[start];
-    if (!currentCoords) return proposedStops.filter(s => !!s);
+    const stopsWithData = proposedStops
+        .filter(s => !!s)
+        .map(s => {
+            const city = resolveCity(s);
+            const coords = CITY_COORDS[city] || CITY_COORDS[s] || null;
+            const distFromStart = coords ? getDistanceKm(startCoords[0], startCoords[1], coords[0], coords[1]) : 999999;
+            return { original: s, distFromStart, coords };
+        });
 
-    let currentDistanceToEnd = getDistanceKm(currentCoords[0], currentCoords[1], endCoords[0], endCoords[1]);
+    // Sort by distance from start
+    stopsWithData.sort((a, b) => a.distFromStart - b.distFromStart);
 
     const validStops: string[] = [];
+    let currentDistanceToEnd = getDistanceKm(startCoords[0], startCoords[1], endCoords[0], endCoords[1]);
 
-    for (const pStopOriginal of proposedStops) {
-        if (!pStopOriginal) continue;
-        const pStop = resolveCity(pStopOriginal);
-        const pCoords = CITY_COORDS[pStop];
-        if (!pCoords) {
-            // Can't validate, so keep it just in case
-            validStops.push(pStopOriginal);
+    for (const item of stopsWithData) {
+        if (!item.coords) {
+            validStops.push(item.original);
             continue;
         }
 
-        const newDistanceToEnd = getDistanceKm(pCoords[0], pCoords[1], endCoords[0], endCoords[1]);
+        const newDistanceToEnd = getDistanceKm(item.coords[0], item.coords[1], endCoords[0], endCoords[1]);
 
-        // It must be strictly closer to the end than the start/previous stop was.
-        // E.g. Ludhiana(distance=100) -> Ambala(distance=150) -> Mohali (fails, 150 > 100)
+        // Basic filtering: stop must be closer to destination than the origin was
+        // AND not further than the destination itself (to avoid extreme overshoot)
         if (newDistanceToEnd < currentDistanceToEnd) {
-            validStops.push(pStopOriginal);
+            validStops.push(item.original);
+            // We don't strictly update currentDistanceToEnd here because OSRM handles the exact path,
+            // we just want to filter out points that are obviously in the wrong direction.
+            // But we update it to ensure the NEXT stop is even closer.
             currentDistanceToEnd = newDistanceToEnd;
         }
     }

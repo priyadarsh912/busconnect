@@ -13,43 +13,46 @@ const LoginPage = () => {
   const [isSignUp, setIsSignUp] = useState(true);
   const [tab, setTab] = useState<"phone" | "email">("phone");
   const [showPassword, setShowPassword] = useState(false);
+  const [isOtpSent, setIsOtpSent] = useState(false);
+  const [otpToken, setOtpToken] = useState("");
 
   const [name, setName] = useState("");
   const [inputValue, setInputValue] = useState("");
   const [password, setPassword] = useState("");
 
-  const handleAuthAction = () => {
+  const handleAuthAction = async () => {
+    // 1. Validation
     if (isSignUp && !name.trim()) {
-      toast({
-        title: "Missing Name",
-        description: "Please enter your full name to sign up.",
-        variant: "destructive",
-      });
+      toast({ title: "Missing Name", description: "Please enter your full name.", variant: "destructive" });
       return;
     }
 
-    if (!inputValue || !password) {
-      toast({
-        title: "Missing Fields",
-        description: `Please enter both your ${tab === "phone" ? "phone number" : "email"} and password.`,
-        variant: "destructive",
-      });
+    if (!inputValue) {
+      toast({ title: "Missing Fields", description: `Please enter your ${tab === "phone" ? "phone number" : "email"}.`, variant: "destructive" });
       return;
     }
 
-    const { success, error } = isSignUp
-      ? authService.signup(name, inputValue, password)
-      : authService.login(inputValue, password);
-
-    if (success) {
-      navigate("/");
-    } else {
-      toast({
-        title: isSignUp ? "Sign Up Failed" : "Login Failed",
-        description: error || "Authentication error occurred.",
-        variant: "destructive",
-      });
+    if (!password) {
+      toast({ title: "Missing Password", description: "Please enter your password.", variant: "destructive" });
+      return;
     }
+
+    // 2. Dummy Auth Flow (Bypass Backend)
+    const userData = {
+      id: `dummy_${Date.now()}`,
+      name: isSignUp ? name.trim() : (tab === "phone" ? "User" : inputValue.split('@')[0] || "User"),
+      phoneOrEmail: inputValue,
+      passwordHash: password
+    };
+
+    // Clear any previous profile customizations on new login
+    localStorage.removeItem("userProfile");
+
+    // Save to localStorage so authService.getCurrentUser() and Profile section will pick it up
+    localStorage.setItem("busconnect_current_user", JSON.stringify(userData));
+
+    toast({ title: "Welcome!", description: isSignUp ? "Account created successfully." : "You are now logged in." });
+    navigate("/");
   };
 
   return (
@@ -67,20 +70,20 @@ const LoginPage = () => {
       <div className="px-6 pt-6 flex-1">
         <h2 className="text-2xl font-extrabold">{isSignUp ? "Create an account" : "Welcome back"}</h2>
         <p className="text-muted-foreground text-sm mt-1">
-          {isSignUp ? "Sign up to start booking buses" : "Login to your bus booking account"}
+          {tab === "phone" ? (isSignUp ? "Sign up with your mobile number" : "Login with your mobile number") : (isSignUp ? "Sign up with your email" : "Login with your email")}
         </p>
 
         {/* Tabs */}
         <div className="flex mt-6 bg-secondary rounded-full p-1">
           <button
-            onClick={() => setTab("phone")}
+            onClick={() => { setTab("phone"); }}
             className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-all ${tab === "phone" ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
               }`}
           >
             Phone Number
           </button>
           <button
-            onClick={() => setTab("email")}
+            onClick={() => { setTab("email"); }}
             className={`flex-1 py-2.5 text-sm font-semibold rounded-full transition-all ${tab === "email" ? "bg-card text-primary shadow-sm" : "text-muted-foreground"
               }`}
           >
@@ -163,8 +166,8 @@ const LoginPage = () => {
         </div>
 
         <div className="flex gap-3">
-          <Button variant="outline" className="w-full h-11 rounded-xl font-medium">
-            Google
+          <Button variant="outline" className="w-full h-11 rounded-xl font-medium bg-secondary text-primary" onClick={() => navigate("/admin-login")}>
+            Login as Admin
           </Button>
         </div>
 

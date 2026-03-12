@@ -4,10 +4,13 @@ import { ArrowLeft, SlidersHorizontal, MapPin, Clock, Star, Bus, ArrowUpDown, Us
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import CrowdBadge from "@/components/CrowdBadge";
+import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
 import PageShell from "@/components/PageShell";
 import { loadBusRoutes, RouteEntry } from "@/utils/ExcelLoader";
 import { loadOutstationRoutes, OutstationRouteEntry } from "@/utils/OutstationLoader";
 import { validateStops } from "@/utils/corridorUtils";
+import { RouteHistoryManager } from "../utils/RouteHistoryManager";
+import { getRoutesForState } from "@/data/stateDatasets";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,6 +22,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { supabase } from "../lib/supabase";
+import { authService } from "../services/authService";
 
 // Define the BusRoute structure to match the CSV + generated fields
 type BusRoute = {
@@ -47,16 +52,16 @@ type BusRoute = {
 
 const mapRoutesToBuses = (routes: (RouteEntry | OutstationRouteEntry)[], tripType: string): BusRoute[] => {
   return routes.map((r, i) => {
-    const from_stop = tripType === "intercity" ? (r as RouteEntry).from_stop : (r as OutstationRouteEntry).start_city;
-    const to_stop = tripType === "intercity" ? (r as RouteEntry).to_stop : (r as OutstationRouteEntry).end_city;
+    const from_stop = tripType === "intercity" ? (r as RouteEntry).from_stop : ((r as any).start_city || (r as any).start_stop);
+    const to_stop = tripType === "intercity" ? (r as RouteEntry).to_stop : ((r as any).end_city || (r as any).end_stop);
 
     // Validate the intermediate stop based on corridors to prevent impossible routes
-    const rawStop = tripType === "intercity" ? (r as RouteEntry).stop : (r as OutstationRouteEntry).stop_city;
+    const rawStop = tripType === "intercity" ? (r as RouteEntry).stop : ((r as any).stop_city || (r as any).stop_1);
     const validatedStops = validateStops(from_stop, to_stop, [rawStop]);
     const stop = validatedStops.length > 0 ? validatedStops[0] : rawStop; // Fallback to raw if validation entirely ignores it (though validation generally retains non-resolvable ones)
 
-    const eta_min = tripType === "intercity" ? (r as RouteEntry).eta_min : parseInt((r as OutstationRouteEntry).eta) || 60;
-    const price_inr = tripType === "intercity" ? (r as RouteEntry).price_inr : (r as OutstationRouteEntry).price;
+    const eta_min = tripType === "intercity" ? (r as RouteEntry).eta_min : ((r as any).eta_min || parseInt((r as any).eta) || 60);
+    const price_inr = tripType === "intercity" ? (r as RouteEntry).price_inr : ((r as any).price_inr || (r as any).price);
 
     const hash = from_stop.charCodeAt(0) + to_stop.charCodeAt(0) + r.route_no.charCodeAt(0);
     const now = new Date();
@@ -89,6 +94,7 @@ const BusResultsPage = () => {
   const location = useLocation();
 
   const initialState = location.state || { from: "", to: "" };
+  const { predict: predictCrowd } = useCrowdPrediction();
 
   const [searchFrom, setSearchFrom] = useState(initialState.from || "");
   const [searchTo, setSearchTo] = useState(initialState.to || "");
@@ -96,18 +102,15 @@ const BusResultsPage = () => {
 
   const [allBuses, setAllBuses] = useState<BusRoute[]>([]);
 
+  const selectedState = initialState.state || localStorage.getItem("selectedState") || "Chandigarh";
+
   useEffect(() => {
     const load = async () => {
-      if (initialState.tripType === "outstation") {
-        const routes = await loadOutstationRoutes();
-        setAllBuses(mapRoutesToBuses(routes, "outstation"));
-      } else {
-        const routes = await loadBusRoutes();
-        setAllBuses(mapRoutesToBuses(routes, "intercity"));
-      }
+      const data = await getRoutesForState(selectedState, initialState.tripType);
+      setAllBuses(mapRoutesToBuses(data, initialState.tripType));
     };
     load();
-  }, [initialState.tripType]);
+  }, [initialState.tripType, selectedState]);
 
   // States for passenger options
   const [passengers, setPassengers] = useState(1);
@@ -118,25 +121,32 @@ const BusResultsPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleBookClick = (bus: BusRoute) => {
-    navigate("/book-ticket", {
+    const isOutstation = initialState.tripType === "outstation";
+    const isLongRoute = bus.distance_km > 35;
+
+    // Redirect to seat selection for outstation OR routes > 35km
+    const targetRoute = (isOutstation || isLongRoute) ? "/seat-selection" : "/book-ticket";
+
+    navigate(targetRoute, {
       state: {
         route_id: bus.route_no,
-        operator: initialState.tripType === "outstation" ? "State Transport" : "CTU",
+        operator: isOutstation ? "State Transport" : "CTU",
         origin: bus.from_stop,
         destination: bus.to_stop,
         next_stop: bus.stop || bus.to_stop,
         eta: bus.eta_min,
         distance_km: bus.distance_km,
         price: bus.price_inr,
-        bus_type: initialState.tripType === "outstation" ? "Outstation AC" : "Intercity"
+        bus_type: isOutstation ? "Outstation AC" : (isLongRoute ? "Intercity Long-Route" : "Intercity")
       }
     });
   };
 
-  const confirmBooking = () => {
+  const confirmBooking = async () => {
     setIsDialogOpen(false);
+    const currentUser = authService.getCurrentUser();
 
-    // Save to localStorage
+    // Save to localStorage (Legacy) and Supabase
     if (selectedBus) {
       const newBooking = {
         id: Date.now(),
@@ -146,8 +156,26 @@ const BusResultsPage = () => {
         price: selectedBus.price_inr * passengers,
         date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       };
+      
       const existing = JSON.parse(localStorage.getItem("myBookings") || "[]");
       localStorage.setItem("myBookings", JSON.stringify([newBooking, ...existing]));
+
+      // Save to Supabase
+      if (currentUser) {
+        const { error } = await supabase.from('bookings').insert([{
+          user_id: currentUser.id,
+          from_stop: selectedBus.from_stop,
+          to_stop: selectedBus.to_stop,
+          departure_time: selectedBus.departure,
+          price: selectedBus.price_inr * passengers,
+          booking_date: newBooking.date
+        }]);
+
+        if (error) {
+          console.error("Supabase booking error:", error);
+          toast.error("Cloud sync failed, but ticket saved locally.");
+        }
+      }
     }
 
     toast.success("Booking confirmed!", {
@@ -272,7 +300,10 @@ const BusResultsPage = () => {
                 <div className="text-right">
                   <p className="text-lg font-extrabold text-primary">₹{bus.price_inr}</p>
                   <p className="text-[10px] text-muted-foreground">PER SEAT</p>
-                  <CrowdBadge level={bus.crowd.toLowerCase() as any} />
+                  {(() => {
+                    const prediction = predictCrowd(bus.from_stop, bus.to_stop, { distanceKm: bus.distance_km });
+                    return <CrowdBadge level={prediction.level} score={prediction.percentage} />;
+                  })()}
                 </div>
               </div>
 
@@ -313,7 +344,14 @@ const BusResultsPage = () => {
               {/* Actions */}
               <div className="flex gap-3">
                 <motion.div whileTap={{ scale: 0.95 }} className="flex-1">
-                  <Button variant="outline" className="w-full h-10 rounded-xl text-sm font-semibold" onClick={() => navigate("/tracking", { state: { route: bus, tripType: initialState.tripType } })}>
+                  <Button
+                    variant="outline"
+                    className="w-full h-10 rounded-xl text-sm font-semibold"
+                    onClick={() => {
+                      RouteHistoryManager.trackRoute(bus, initialState.tripType);
+                      navigate("/tracking", { state: { route: bus, tripType: initialState.tripType } });
+                    }}
+                  >
                     <MapPin className="w-4 h-4 mr-1.5" /> Track
                   </Button>
                 </motion.div>

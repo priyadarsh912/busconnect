@@ -21,12 +21,27 @@ import MyBookingsPage from "./pages/MyBookingsPage";
 import HighwayRadarPage from "./pages/HighwayRadarPage";
 import TripTypeSelectionPage from "./pages/TripTypeSelectionPage";
 import RouteSearchPage from "./pages/RouteSearchPage";
+import OutstationSearchPage from "./pages/OutstationSearchPage";
+import ConnectingRoutesPage from "./pages/ConnectingRoutesPage";
 import BookTicketPage from "./pages/BookTicketPage";
+import SeatSelectionPage from "./pages/SeatSelectionPage";
 import UpiPaymentPage from "./pages/UpiPaymentPage";
 import NetBankingWalletPage from "./pages/NetBankingWalletPage";
 import CardPaymentPage from "./pages/CardPaymentPage";
 import SOSButton from "./components/SOSButton";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AdminLoginPage from "./pages/admin/AdminLoginPage";
+import AdminLayout from "./components/admin/AdminLayout";
+import AdminDashboardPage from "./pages/admin/AdminDashboardPage";
+import AdminRoutesPage from "./pages/admin/AdminRoutesPage";
+import AdminAnalyticsPage from "./pages/admin/AdminAnalyticsPage";
+import AdminSettingsPage from "./pages/admin/AdminSettingsPage";
+import AdminBusTrackingPage from "./pages/admin/AdminBusTrackingPage";
+import AdminRouteDetailsPage from "./pages/admin/AdminRouteDetailsPage";
+import AdminDriversPage from "./pages/admin/AdminDriversPage";
+import AdminSecurityPage from "./pages/admin/AdminSecurityPage";
+import AdminNotificationsPage from "./pages/admin/AdminNotificationsPage";
+import { LanguageProvider } from "./lib/language";
 
 const queryClient = new QueryClient();
 
@@ -37,13 +52,21 @@ const AnimatedRoutes = () => {
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.pathname}>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/admin-login" element={<AdminLoginPage />} />
 
-        import React from "react";
-        // Import added correctly by just referencing the new routes directly under the parent routes.
-        import UpiPaymentPage from "./pages/UpiPaymentPage";
-        import NetBankingWalletPage from "./pages/NetBankingWalletPage";
+        {/* Admin Routes */}
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route path="dashboard" element={<AdminDashboardPage />} />
+          <Route path="routes" element={<AdminRoutesPage />} />
+          <Route path="analytics" element={<AdminAnalyticsPage />} />
+          <Route path="settings" element={<AdminSettingsPage />} />
+          <Route path="tracking" element={<AdminBusTrackingPage />} />
+          <Route path="route-details" element={<AdminRouteDetailsPage />} />
+          <Route path="drivers" element={<AdminDriversPage />} />
+          <Route path="security" element={<AdminSecurityPage />} />
+          <Route path="notifications" element={<AdminNotificationsPage />} />
+        </Route>
 
-        // ... existing routes
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<HomePage />} />
           <Route path="/bus-results" element={<BusResultsPage />} />
@@ -58,6 +81,9 @@ const AnimatedRoutes = () => {
           <Route path="/radar" element={<HighwayRadarPage />} />
           <Route path="/trip-type" element={<TripTypeSelectionPage />} />
           <Route path="/route-search" element={<RouteSearchPage />} />
+          <Route path="/connecting-routes" element={<ConnectingRoutesPage />} />
+          <Route path="/outstation-search" element={<OutstationSearchPage />} />
+          <Route path="/seat-selection" element={<SeatSelectionPage />} />
           <Route path="/book-ticket" element={<BookTicketPage />} />
           <Route path="/payment/upi" element={<UpiPaymentPage />} />
           <Route path="/payment/netbanking/wallet" element={<NetBankingWalletPage />} />
@@ -72,17 +98,19 @@ const AnimatedRoutes = () => {
 
 const App = () => (
   <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <AnimatedRoutes />
-          <SOSButton />
-          <BottomNav />
-        </BrowserRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <LanguageProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <AnimatedRoutes />
+            <SOSButton />
+            <BottomNav />
+          </BrowserRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </LanguageProvider>
   </ThemeProvider>
 );
 

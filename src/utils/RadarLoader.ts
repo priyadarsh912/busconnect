@@ -23,7 +23,7 @@ export interface RadarBus {
 
 export const loadRadarBuses = async (): Promise<RadarBus[]> => {
     try {
-        const response = await fetch('/bus_routes_realistic_5000.xlsx');
+        const response = await fetch('/datasets/bus_routes_realistic_5000.xlsx');
         if (!response.ok) throw new Error('Failed to fetch radar dataset');
 
         const arrayBuffer = await response.arrayBuffer();

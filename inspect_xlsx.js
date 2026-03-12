@@ -1,10 +1,5 @@
-import * as XLSX from 'xlsx';
-import * as fs from 'fs';
-
-const filePath = 'c:\\Users\\Tanmay\\Downloads\\busconnect-main (1)\\tricity_bus_routes_3000.xlsx';
-const workbook = XLSX.readFile(filePath);
-const sheetName = workbook.SheetNames[0];
-const worksheet = workbook.Sheets[sheetName];
-const data = XLSX.utils.sheet_to_json(worksheet);
-
-console.log(JSON.stringify(data.slice(0, 5), null, 2));
+const XLSX = require('xlsx');
+const workbook = XLSX.readFile('c:/Users/Tanmay/Downloads/busconnect-main (1)/busconnect-main/public/datasets/delhi_outstation_routes_5000.xlsx');
+const sheet = workbook.Sheets[workbook.SheetNames[0]];
+const data = XLSX.utils.sheet_to_json(sheet);
+console.log(JSON.stringify(data[0], null, 2));
