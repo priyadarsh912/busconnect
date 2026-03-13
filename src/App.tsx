@@ -42,6 +42,8 @@ import AdminDriversPage from "./pages/admin/AdminDriversPage";
 import AdminSecurityPage from "./pages/admin/AdminSecurityPage";
 import AdminNotificationsPage from "./pages/admin/AdminNotificationsPage";
 import { LanguageProvider } from "./lib/language";
+import SplashScreen from "./components/SplashScreen";
+import { useState, useEffect } from "react";
 
 const queryClient = new QueryClient();
 
@@ -96,22 +98,29 @@ const AnimatedRoutes = () => {
   );
 };
 
-const App = () => (
-  <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
-    <LanguageProvider>
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <AnimatedRoutes />
-            <SOSButton />
-            <BottomNav />
-          </BrowserRouter>
-        </TooltipProvider>
-      </QueryClientProvider>
-    </LanguageProvider>
-  </ThemeProvider>
-);
+const App = () => {
+  const [showSplash, setShowSplash] = useState(true);
+
+  return (
+    <ThemeProvider defaultTheme="light" storageKey="vite-ui-theme">
+      <LanguageProvider>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <AnimatePresence>
+              {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
+            </AnimatePresence>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <AnimatedRoutes />
+              <SOSButton />
+              <BottomNav />
+            </BrowserRouter>
+          </TooltipProvider>
+        </QueryClientProvider>
+      </LanguageProvider>
+    </ThemeProvider>
+  );
+};
 
 export default App;
