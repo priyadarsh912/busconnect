@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "460177790787",
+    "firebase_url": "https://bus-connect-1bfe7-default-rtdb.firebaseio.com",
+    "project_id": "bus-connect-1bfe7",
+    "storage_bucket": "bus-connect-1bfe7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:460177790787:android:c401157cd324501b73c1f6",
+        "android_client_info": {
+          "package_name": "busconnect.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7f7iLnNv_15aaBfqE8FzEYJJP_EB_W8M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
