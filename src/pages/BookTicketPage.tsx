@@ -3,10 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
     ArrowLeft,
     Bus,
-    MapPin,
-    Clock,
     User,
-    Phone,
     CreditCard,
     Wallet,
     Smartphone,
@@ -20,9 +17,12 @@ import CrowdBadge from "@/components/CrowdBadge";
 import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
 import { RouteHistoryManager } from "../utils/RouteHistoryManager";
 import PageShell from "@/components/PageShell";
-import { toast } from "sonner";
+import { notificationService } from "../services/notificationService";
 import { authService } from "../services/authService";
-import { firestoreService } from "../services/firestoreService";
+import { busService } from "../services/busService";
+import { offlineBusService } from "../services/offline/OfflineBusService";
+import { networkManager } from "../services/offline/NetworkManager";
+import { analyticsService } from "../services/AnalyticsService";
 
 const BookTicketPage = () => {
     const navigate = useNavigate();
@@ -32,11 +32,9 @@ const BookTicketPage = () => {
         operator,
         origin,
         destination,
-        next_stop,
         eta,
         distance_km,
         price,
-        bus_type,
         selectedSeats,
         passengers: initialPassengers
     } = location.state || {};
@@ -50,7 +48,7 @@ const BookTicketPage = () => {
 
     const handleConfirmBooking = async () => {
         if (!passengerName || !mobileNumber || !paymentMethod) {
-            toast.error("Please fill in all details and select a payment method");
+            notificationService.showLocalNotification("Missing Details", "Please fill in all details and select a payment method");
             return;
         }
 
@@ -61,13 +59,17 @@ const BookTicketPage = () => {
                 to: destination,
                 operator: operator,
                 price_inr: price * seats,
-                departure: "Scheduled", // Placeholder
+                departure: "Scheduled",
             },
             passengers: seats,
             selectedSeats
         };
 
-        // Track interaction
+        // Track funnel start
+        analyticsService.trackBookingStart(route_id, `${origin} → ${destination}`);
+        analyticsService.logEvent('payment_initiated', { method: paymentMethod, amount: price * seats });
+
+        // Track interaction (Local)
         RouteHistoryManager.trackRoute({
             route_id: route_id,
             from_stop: origin,
@@ -76,8 +78,10 @@ const BookTicketPage = () => {
             price_inr: price
         }, 'outstation');
 
-        // Sync to Firestore
+        // Sync to Supabase
         const currentUser = authService.getCurrentUser();
+        
+        // Local backup
         const newBooking = {
             id: Date.now(),
             from: origin,
@@ -90,27 +94,32 @@ const BookTicketPage = () => {
         localStorage.setItem("myBookings", JSON.stringify([newBooking, ...existing]));
 
         if (currentUser) {
-            // 1. Create Booking in Firestore
-            firestoreService.createBooking(
+            // 1. Create Booking (Multi-layer: Online/Offline)
+            offlineBusService.createBooking({
+                user_id: currentUser.id,
+                bus_id: route_id, 
+                source_stop_id: origin,
+                destination_stop_id: destination,
+                fare: price * seats,
+            }).then(result => {
+                if (result.status === 'pending_sync') {
+                   notificationService.showLocalNotification("Booking Queued", "You are offline. Booking will sync when connected.");
+                   analyticsService.logEvent('data_saved_locally', { type: 'booking', bus_id: route_id });
+                } else {
+                   analyticsService.logEvent('booking_completed', { bus_id: route_id, status: 'online' });
+                }
+            }).catch(err => {
+                console.error("Offline booking error:", err);
+                analyticsService.logEvent('booking_failed', { bus_id: route_id, error: err.message });
+            });
+
+            // 2. Save Search History (Multi-layer)
+            offlineBusService.saveSearchHistory(
                 currentUser.id,
                 origin,
                 destination,
-                newBooking.date,
-                {
-                    price: price * seats,
-                    passengers: seats,
-                    departureTime: "Scheduled",
-                    seatNumbers: selectedSeats,
-                    userName: currentUser.name,
-                }
-            ).catch(err => console.error("Firestore booking error:", err));
-
-            // 2. Save User Route (frequency tracking)
-            firestoreService.saveUserRoute(
-                currentUser.id,
-                origin,
-                destination
-            ).catch(err => console.error("Firestore route error:", err));
+                'outstation'
+            ).catch(err => console.error("Offline history error:", err));
         }
 
         if (paymentMethod === "upi") {
@@ -120,8 +129,8 @@ const BookTicketPage = () => {
         } else if (paymentMethod === "card") {
             navigate("/payment/card", { state: bookingState });
         } else {
-            // Fallback for Card or other
-            toast.success("Booking successful!");
+            notificationService.showLocalNotification("Booking Confirmed! 🚌", `Trip from ${origin} to ${destination} booked successfully!`);
+            analyticsService.logEvent('booking_completed', { bus_id: route_id, method: paymentMethod });
             navigate("/confirmation", { state: bookingState });
         }
     };

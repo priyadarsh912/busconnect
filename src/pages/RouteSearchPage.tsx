@@ -6,8 +6,7 @@ import PageShell from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
 import { useIntercityRoutes } from "@/hooks/useIntercityRoutes";
 import { useOutstationRoutes } from "@/hooks/useOutstationRoutes";
-import { RouteEntry } from "@/utils/ExcelLoader";
-import { OutstationRouteEntry } from "@/utils/OutstationLoader";
+import { BusRoute } from "@/services/busService";
 import { RouteHistoryManager } from "../utils/RouteHistoryManager";
 
 const fadeUp = {
@@ -21,12 +20,12 @@ const RouteSearchPage = () => {
     const selectedState: string = location.state?.state || localStorage.getItem("selectedState") || "Chandigarh";
     const tripType: "intercity" | "outstation" = location.state?.tripType ?? "intercity";
 
-    // Hooks - separate engines
+    // Hooks - Supabase-backed engines
     const intercity = useIntercityRoutes(selectedState);
     const outstation = useOutstationRoutes(selectedState);
 
     const [allCities, setAllCities] = useState<string[]>([]);
-    const [popularRoutes, setPopularRoutes] = useState<any[]>([]);
+    const [popularRoutes, setPopularRoutes] = useState<BusRoute[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [origin, setOrigin] = useState("");
     const [destination, setDestination] = useState("");
@@ -41,45 +40,31 @@ const RouteSearchPage = () => {
         setIsLoading(loading);
 
         if (!loading) {
-            if (tripType === "intercity") {
-                const routes = intercity.routes.filter(r => r.distance_km <= 35);
-                const stops = new Set<string>();
-                routes.forEach(r => {
-                    if (r.from_stop) stops.add(r.from_stop);
-                    if (r.to_stop) stops.add(r.to_stop);
-                });
-                setAllCities(Array.from(stops).sort());
+            const routes = tripType === "intercity" ? intercity.routes : outstation.routes;
+            const stops = new Set<string>();
+            
+            routes.forEach(r => {
+                // In Supabase schema, source and destination are objects with 'name'
+                const src = (r as any).source?.name || (r as any).from_stop;
+                const dst = (r as any).destination?.name || (r as any).to_stop;
+                if (src) stops.add(src);
+                if (dst) stops.add(dst);
+            });
+            setAllCities(Array.from(stops).sort());
 
-                const seen = new Set<string>();
-                const popular: RouteEntry[] = [];
-                for (const r of routes) {
-                    const key = `${r.from_stop}|${r.stop}|${r.to_stop}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    popular.push(r);
-                    if (popular.length >= 5) break;
-                }
-                setPopularRoutes(popular);
-            } else {
-                const routes = outstation.routes;
-                const cities = new Set<string>();
-                routes.forEach(r => {
-                    if (r.start_city) cities.add(r.start_city);
-                    if (r.end_city) cities.add(r.end_city);
-                });
-                setAllCities(Array.from(cities).sort());
-
-                const seen = new Set<string>();
-                const popular: OutstationRouteEntry[] = [];
-                for (const r of routes) {
-                    const key = `${r.start_city}|${r.stop_city}|${r.end_city}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    popular.push(r);
-                    if (popular.length >= 5) break;
-                }
-                setPopularRoutes(popular);
+            // Get top 5 unique routes for popular section
+            const seen = new Set<string>();
+            const popular: BusRoute[] = [];
+            for (const r of routes) {
+                const src = (r as any).source?.name || (r as any).from_stop;
+                const dst = (r as any).destination?.name || (r as any).to_stop;
+                const key = `${src}|${dst}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                popular.push(r);
+                if (popular.length >= 5) break;
             }
+            setPopularRoutes(popular);
         }
     }, [tripType, intercity.isLoading, outstation.isLoading, intercity.routes, outstation.routes]);
 
@@ -201,7 +186,6 @@ const RouteSearchPage = () => {
                                 spellCheck={false}
                                 className="w-full font-semibold text-[15px] outline-none bg-transparent border-none placeholder:text-muted-foreground/50 text-foreground mt-0.5"
                             />
-                            {/* FROM dropdown */}
                             <AnimatePresence>
                                 {fromSuggestions.length > 0 && (
                                     <motion.div
@@ -251,7 +235,6 @@ const RouteSearchPage = () => {
                                 spellCheck={false}
                                 className="w-full font-semibold text-[15px] outline-none bg-transparent border-none placeholder:text-muted-foreground/50 text-foreground mt-0.5"
                             />
-                            {/* TO dropdown */}
                             <AnimatePresence>
                                 {toSuggestions.length > 0 && (
                                     <motion.div
@@ -333,50 +316,37 @@ const RouteSearchPage = () => {
                             </p>
                         </div>
                     ) : (
-                        popularRoutes.map((route, i) => (
-                            <motion.button
-                                key={i}
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.1 + i * 0.06 }}
-                                whileHover={{ scale: 1.02, x: 4 }}
-                                whileTap={{ scale: 0.97 }}
-                                onClick={() => {
-                                    const from = tripType === "intercity" ? (route as RouteEntry).from_stop : (route as OutstationRouteEntry).start_city;
-                                    const to = tripType === "intercity" ? (route as RouteEntry).to_stop : (route as OutstationRouteEntry).end_city;
-                                    setOrigin(from);
-                                    setDestination(to);
-                                    navigate("/routes", {
-                                        state: { state: selectedState, tripType, origin: from, destination: to },
-                                    });
-                                }}
-                                className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3 text-left"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: accentColor }} />
-                                    <span className="text-sm font-semibold text-foreground truncate block w-full pr-4 leading-relaxed">
-                                        {tripType === "intercity" ? (
-                                            <>
-                                                {(route as RouteEntry).from_stop}{" "}
-                                                <span className="text-muted-foreground font-normal">→</span>{" "}
-                                                <span className="text-primary">{(route as RouteEntry).stop}</span>{" "}
-                                                <span className="text-muted-foreground font-normal">→</span>{" "}
-                                                {(route as RouteEntry).to_stop}
-                                            </>
-                                        ) : (
-                                            <>
-                                                {(route as OutstationRouteEntry).start_city}{" "}
-                                                <span className="text-muted-foreground font-normal">→</span>{" "}
-                                                <span className="text-primary">{(route as OutstationRouteEntry).stop_city}</span>{" "}
-                                                <span className="text-muted-foreground font-normal">→</span>{" "}
-                                                {(route as OutstationRouteEntry).end_city}
-                                            </>
-                                        )}
-                                    </span>
-                                </div>
-                                <ArrowLeft className="w-3.5 h-3.5 text-muted-foreground rotate-180 shrink-0" />
-                            </motion.button>
-                        ))
+                        popularRoutes.map((route, i) => {
+                            const src = (route as any).source?.name || (route as any).from_stop;
+                            const dst = (route as any).destination?.name || (route as any).to_stop;
+                            
+                            return (
+                                <motion.button
+                                    key={i}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    transition={{ delay: 0.1 + i * 0.06 }}
+                                    whileHover={{ scale: 1.02, x: 4 }}
+                                    whileTap={{ scale: 0.97 }}
+                                    onClick={() => {
+                                        setOrigin(src);
+                                        setDestination(dst);
+                                        navigate("/routes", {
+                                            state: { state: selectedState, tripType, origin: src, destination: dst },
+                                        });
+                                    }}
+                                    className="w-full flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3 text-left"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: accentColor }} />
+                                        <span className="text-sm font-semibold text-foreground truncate block w-full pr-4 leading-relaxed">
+                                            {src} <span className="text-muted-foreground font-normal">→</span> {dst}
+                                        </span>
+                                    </div>
+                                    <ArrowLeft className="w-3.5 h-3.5 text-muted-foreground rotate-180 shrink-0" />
+                                </motion.button>
+                            );
+                        })
                     )}
                 </div>
             </motion.div>

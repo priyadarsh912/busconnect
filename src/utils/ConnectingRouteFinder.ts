@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 export interface BusRoute {
     start_stop: string;
     bus_no: string;
@@ -18,19 +20,24 @@ export interface RouteResult {
 
 export const loadConnectingRoutes = async (): Promise<BusRoute[]> => {
     try {
-        const response = await fetch('/datasets/tricity_bus_routes.csv');
-        const text = await response.text();
-        const lines = text.split('\n').filter(line => line.trim() !== '');
+        // Query routes with names from Supabase
+        const { data, error } = await supabase
+            .from('routes')
+            .select(`
+                id,
+                source:source_stop_id (name),
+                destination:destination_stop_id (name)
+            `);
 
-        // Skip header
-        const data = lines.slice(1).map(line => {
-            const [start_stop, bus_no, end_stop] = line.split(',').map(s => s?.trim());
-            return { start_stop, bus_no, end_stop };
-        });
+        if (error) throw error;
 
-        return data;
+        return (data || []).map(r => ({
+            start_stop: (r.source as any)?.name || 'Unknown',
+            bus_no: r.id.toString(), // Using route ID as bus number for now
+            end_stop: (r.destination as any)?.name || 'Unknown'
+        }));
     } catch (error) {
-        console.error('Error loading connecting routes:', error);
+        console.error('Error loading connecting routes from Supabase:', error);
         return [];
     }
 };
@@ -67,7 +74,7 @@ export const findConnectingRoute = (from: string, to: string, routes: BusRoute[]
         };
     }
 
-    // 2. Check for Connecting Route (exactly 2 steps as per requirements)
+    // 2. Check for Connecting Route (exactly 2 steps)
     const firstLegs = routes.filter(r => normalizeStop(r.start_stop) === normalizedFrom);
     const secondLegs = routes.filter(r => normalizeStop(r.end_stop) === normalizedTo);
 

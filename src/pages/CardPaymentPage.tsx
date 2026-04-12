@@ -3,8 +3,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, CreditCard, HelpCircle, ShieldCheck } from "lucide-react";
 import { motion } from "framer-motion";
 import PageShell from "@/components/PageShell";
-import { firestoreService } from "../services/firestoreService";
 import { authService } from "../services/authService";
+import { busService } from "../services/busService";
+import { notificationService } from "../services/notificationService";
 
 export default function CardPaymentPage() {
     const location = useLocation();
@@ -25,24 +26,32 @@ export default function CardPaymentPage() {
         setTimeout(() => {
             setIsVerifying(false);
 
-            // Auto-save: Create booking in Firestore on payment success
+            // Auto-save: Create booking in Supabase on payment success
             const user = authService.getCurrentUser();
             const bus = bookingState?.bus;
             if (user && bus) {
                 const from = bus.from_stop || bus.origin || bus.from || "Unknown";
                 const to = bus.to_stop || bus.destination || bus.to || "Unknown";
-                firestoreService.createBooking(
-                    user.id, from, to,
-                    new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-                    { 
-                      price: amountToPay, 
-                      passengers: bookingState?.passengers || 1, 
-                      departureTime: bus.departure || "Scheduled",
-                      userName: user.name
-                    }
-                ).catch(err => console.error("Card Firestore booking:", err));
-                firestoreService.saveUserRoute(user.id, from, to).catch(() => {});
+                
+                busService.createBooking({
+                    user_id: user.id,
+                    bus_id: bus.route_no || "N/A",
+                    source_stop_id: from,
+                    destination_stop_id: to,
+                    fare: amountToPay
+                }).catch(err => console.error("Supabase booking error:", err));
+
+                busService.saveSearchHistory(user.id, from, to).catch(() => {});
             }
+
+            // Trigger system notification
+            const from = bus?.from_stop || bus?.origin || bus?.from || "Origin";
+            const to = bus?.to_stop || bus?.destination || bus?.to || "Destination";
+            
+            notificationService.showLocalNotification(
+                "Booking Confirmed! 🚌", 
+                `Trip from ${from} to ${to} booked successfully! Enjoy your ride.`
+            );
 
             navigate("/confirmation", { state: bookingState });
         }, 1500);

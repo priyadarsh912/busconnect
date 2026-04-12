@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
 import busHero from "@/assets/bus-hero.jpg";
 import { authService } from "../services/authService";
+import { analyticsService } from "../services/AnalyticsService";
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -64,6 +65,7 @@ const LoginPage = () => {
           const res = await authService.verifyPhoneOtp(otp, isSignUp ? name : undefined);
           if (res.success) {
             toast({ title: "Success", description: "Phone number verified!" });
+            analyticsService.logEvent(isSignUp ? 'user_registered' : 'user_logged_in', { method: 'phone' });
             navigate("/");
           } else {
             toast({ title: "Verification Failed", description: res.error, variant: "destructive" });
@@ -89,6 +91,7 @@ const LoginPage = () => {
           const res = await authService.login(inputValue, password);
           if (res.success) {
             toast({ title: "Welcome!", description: "You are now logged in." });
+            analyticsService.logEvent('user_logged_in', { method: 'email' });
             navigate("/");
           } else {
             toast({ title: "Login Failed", description: res.error, variant: "destructive" });

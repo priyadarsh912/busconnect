@@ -6,11 +6,11 @@ import PageShell from "@/components/PageShell";
 import { Button } from "@/components/ui/button";
 import CrowdBadge from "@/components/CrowdBadge";
 import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
-import * as XLSX from "xlsx";
 import { RouteHistoryManager } from "../utils/RouteHistoryManager";
 import { getRoutesForState } from "../data/stateDatasets";
-import { firestoreService } from "../services/firestoreService";
 import { authService } from "../services/authService";
+import { busService } from "../services/busService";
+import { analyticsService } from "../services/AnalyticsService";
 
 /* ───────────────────── Types ───────────────────── */
 interface OutstationRoute {
@@ -48,16 +48,10 @@ const CITY_ALIASES: Record<string, string[]> = {
     sunny_enclave: ["sunny enclave"],
 };
 
-/**
- * Resolve a user-typed city name to a list of dataset-level city names
- * that should be matched.
- */
 const resolveCity = (input: string): string[] => {
     const lower = input.trim().toLowerCase();
     if (!lower) return [];
 
-    // Sort alias groups by the length of their longest alias string (longest first)
-    // to ensure specific matches like "Delhi Airport" take precedence over "Delhi".
     const sortedGroups = Object.entries(CITY_ALIASES).sort((a, b) => {
         const maxA = Math.max(...a[1].map(s => s.length));
         const maxB = Math.max(...b[1].map(s => s.length));
@@ -69,14 +63,9 @@ const resolveCity = (input: string): string[] => {
             return aliases;
         }
     }
-    // If no alias found, return the raw input so partial matching still works
     return [lower];
 };
 
-/**
- * Check whether a route field (origin / destination) matches ANY of the
- * resolved aliases using case-insensitive partial matching.
- */
 const cityMatches = (routeField: string, resolvedAliases: string[]): boolean => {
     const field = routeField.toLowerCase();
     return resolvedAliases.some(
@@ -84,13 +73,11 @@ const cityMatches = (routeField: string, resolvedAliases: string[]): boolean => 
     );
 };
 
-/* ───────────────────── Animation ───────────────────── */
 const fadeUp: any = {
     initial: { opacity: 0, y: 20 },
     animate: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" as const } },
 };
 
-/* ───────────────────── Component ───────────────────── */
 const OutstationSearchPage = () => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -101,14 +88,12 @@ const OutstationSearchPage = () => {
     const [hasSearched, setHasSearched] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Suggestion state
     const [allCities, setAllCities] = useState<string[]>([]);
     const [fromSuggestions, setFromSuggestions] = useState<string[]>([]);
     const [toSuggestions, setToSuggestions] = useState<string[]>([]);
     const { predict: predictCrowd } = useCrowdPrediction();
     const toRef = useRef<HTMLInputElement>(null);
 
-    /* ── Load the XLSX dataset on mount ── */
     useEffect(() => {
         const selectedState = (location.state as any)?.state || localStorage.getItem("selectedState") || "Chandigarh";
         loadData(selectedState);
@@ -119,7 +104,6 @@ const OutstationSearchPage = () => {
             setIsLoading(true);
             const data = await getRoutesForState(stateName);
 
-            // Map UnifiedRoute (RadarBus) to OutstationRoute
             const outstationRoutes: OutstationRoute[] = data
                 .filter(
                     (r) =>
@@ -145,7 +129,6 @@ const OutstationSearchPage = () => {
 
             setRoutes(outstationRoutes);
 
-            // Build unique city list for suggestions
             const cities = new Set<string>();
             outstationRoutes.forEach((r) => {
                 if (r.origin) cities.add(r.origin);
@@ -159,11 +142,9 @@ const OutstationSearchPage = () => {
         }
     };
 
-    /* ── Suggestions ── */
     const getSuggestions = (input: string): string[] => {
         if (!input.trim()) return [];
         const lower = input.trim().toLowerCase();
-        // Also resolve aliases so user typing "ropar" sees Chandigarh-area cities
         const resolved = resolveCity(input);
         return allCities
             .filter(
@@ -174,7 +155,6 @@ const OutstationSearchPage = () => {
             .slice(0, 8);
     };
 
-    /* ── Search handler ── */
     const handleSearch = () => {
         if (!from.trim() || !to.trim()) return;
 
@@ -184,10 +164,8 @@ const OutstationSearchPage = () => {
         const toAliases = resolveCity(to);
 
         const matches = routes.filter((r) => {
-            // Forward match: origin matches `from`, destination matches `to`
             const forwardMatch =
                 cityMatches(r.origin, fromAliases) && cityMatches(r.destination, toAliases);
-            // Reverse match: origin matches `to`, destination matches `from`
             const reverseMatch =
                 cityMatches(r.origin, toAliases) && cityMatches(r.destination, fromAliases);
             return forwardMatch || reverseMatch;
@@ -196,12 +174,17 @@ const OutstationSearchPage = () => {
         setFilteredRoutes(matches);
 
         // Track search interaction
-        if (matches.length > 0 || (from && to)) {
-            RouteHistoryManager.trackRoute({
-                route_id: `${from}-${to}`,
-                start_stop: from,
-                end_stop: to
-            }, 'outstation');
+        analyticsService.logEvent('search_bus', { 
+            from: from.trim(), 
+            to: to.trim(), 
+            results_count: matches.length,
+            trip_type: 'outstation'
+        });
+
+        // Track search interaction to Supabase (Legacy compatibility)
+        const user = authService.getCurrentUser();
+        if (user && (matches.length > 0 || (from && to))) {
+            busService.saveSearchHistory(user.id, from, to, 'outstation').catch(() => {});
         }
     };
 
@@ -375,7 +358,6 @@ const OutstationSearchPage = () => {
                                         transition={{ delay: idx * 0.04 }}
                                         className="p-4 rounded-2xl border border-border bg-card hover:border-emerald-400/40 transition-colors shadow-sm"
                                     >
-                                        {/* Top row: operator + fare */}
                                         <div className="flex justify-between items-start mb-2">
                                             <div>
                                                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 uppercase border border-emerald-200 dark:border-emerald-800">
@@ -391,14 +373,12 @@ const OutstationSearchPage = () => {
                                             </div>
                                         </div>
 
-                                        {/* Route */}
                                         <h3 className="font-bold text-base mb-3">
                                             {route.origin}{" "}
                                             <span className="text-muted-foreground font-normal">→</span>{" "}
                                             {route.destination}
                                         </h3>
 
-                                        {/* Details row */}
                                         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground font-medium mb-3">
                                             <div className="flex items-center gap-1">
                                                 <Route className="w-3 h-3 text-emerald-500" />
@@ -414,7 +394,6 @@ const OutstationSearchPage = () => {
                                             })()}
                                         </div>
 
-                                        {/* Action buttons */}
                                         <div className="flex gap-2">
                                             <Button
                                                 variant="outline"
@@ -422,6 +401,10 @@ const OutstationSearchPage = () => {
                                                 className="flex-1 rounded-xl text-xs font-bold"
                                                 onClick={() => {
                                                     RouteHistoryManager.trackRoute(route, 'outstation');
+                                                    analyticsService.logEvent('track_bus_clicked', { 
+                                                        bus_id: route.route_id, 
+                                                        route: `${route.origin} → ${route.destination}` 
+                                                    });
                                                     navigate("/tracking", {
                                                         state: {
                                                             tripType: "outstation",
@@ -452,10 +435,13 @@ const OutstationSearchPage = () => {
                                                 size="sm"
                                                 className="flex-1 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-500 text-white"
                                                 onClick={() => {
-                                                    // Auto-save user route to Firestore
                                                     const user = authService.getCurrentUser();
+                                                    analyticsService.logEvent('route_selected', { 
+                                                        bus_id: route.route_id, 
+                                                        route: `${route.origin} → ${route.destination}` 
+                                                    });
                                                     if (user) {
-                                                        firestoreService.saveUserRoute(user.id, route.origin, route.destination).catch(() => {});
+                                                        busService.saveSearchHistory(user.id, route.origin, route.destination, 'outstation').catch(() => {});
                                                     }
                                                     navigate("/seat-selection", {
                                                         state: {

@@ -3,10 +3,8 @@ import { useNavigate, useLocation } from "react-router-dom";
 import {
   ArrowLeft,
   Info,
-  Search,
   MapPin,
   Clock,
-  Users,
   Bus,
   Zap,
 } from "lucide-react";
@@ -14,7 +12,6 @@ import CrowdBadge from "@/components/CrowdBadge";
 import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
 import { MostUsedRoutes } from "@/components/MostUsedRoutes";
 import PageShell from "@/components/PageShell";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -24,10 +21,10 @@ import { useLanguage } from "@/lib/language";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
-import * as XLSX from "xlsx";
 import { validateStops } from "@/utils/corridorUtils";
-import { firestoreService } from "../services/firestoreService";
 import { authService } from "../services/authService";
+import { busService } from "../services/busService";
+import { analyticsService } from "../services/AnalyticsService";
 
 // Safely modify the icon prototype
 const DefaultIcon = L.Icon?.Default;
@@ -94,16 +91,16 @@ const TrackingPage = () => {
     }
   }, [location.state]);
 
-  // Auto-save: Log tracking interaction to Firestore
+  // Auto-save: Log tracking interaction to Supabase
   useEffect(() => {
     if (from && to && from !== "Unknown" && to !== "Unknown") {
       const user = authService.getCurrentUser();
       if (user) {
-        firestoreService.saveSearchHistory(user.id, from, to, activeTripType || "intercity").catch(() => {});
-        firestoreService.saveUserRoute(user.id, from, to).catch(() => {});
+        // Save search history and intent in Supabase
+        busService.saveSearchHistory(user.id, from, to, activeTripType || "intercity").catch(() => {});
       }
     }
-  }, [from, to]); // Only fire when route changes
+  }, [from, to]); 
 
   // Auto-load most used route if none is provided
   useEffect(() => {
@@ -145,6 +142,16 @@ const TrackingPage = () => {
       }
     }
   }, [activeRoute]);
+
+  // Track tracking started
+  useEffect(() => {
+    if (activeRoute) {
+        analyticsService.logEvent('tracking_started', { 
+            bus_id: activeRoute.route_id, 
+            route: `${from} → ${to}` 
+        });
+    }
+  }, [activeRoute?.route_id]);
 
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -291,7 +298,7 @@ const TrackingPage = () => {
         ? [activeRoute.lat_from, activeRoute.lon_from]
         : [30.7333, 76.7794];
 
-    const mapInstance = L.map(container).setView(initialCenter, 14); // Zoom in closer for "Uber-like" feel
+    const mapInstance = L.map(container).setView(initialCenter, 14); 
     map.current = mapInstance;
     routingLayer.current = L.layerGroup().addTo(mapInstance);
 
@@ -429,13 +436,13 @@ const TrackingPage = () => {
           if (routeData.code === "Ok" && routeData.routes.length > 0) {
             const osrmRoute = routeData.routes[0];
 
-            // Set Distance & ETA state correctly utilizing osrmRoute distance, not the outer activeRoute
+            // Set Distance & ETA state correctly
             setDistance((osrmRoute.distance / 1000).toFixed(1) + " km");
             const mins = Math.round(osrmRoute.duration / 60);
             setEtaMinutes(mins);
             setEta(mins + " mins");
 
-            // Draw activeRoute on map using L.geoJSON to exactly follow the road geometry
+            // Draw activeRoute on map
             const geoJsonLayer = L.geoJSON(osrmRoute.geometry, {
               style: {
                 color: "#2563EB",
@@ -522,7 +529,7 @@ const TrackingPage = () => {
                 if (
                   accumulatedDistance - lastStopDistance >= nextDiscoveryDistance &&
                   intermediateStops.length < 5 &&
-                  i === legs.length - 1 // Only add extra stops in the final leg to keep timeline clean
+                  i === legs.length - 1 
                 ) {
                   if (
                     step.name &&
@@ -544,14 +551,11 @@ const TrackingPage = () => {
                 }
               }
 
-              // At the end of each leg (except the last or if manually geocoded), 
-              // we add the waypoint stop if it's one of ours
               const waypointName = getStopNameForLegEnd(i);
               if (waypointName && i < legs.length - 1) {
                 const progressPct = (accumulatedDistance / osrmRoute.distance) * 100;
                 const timeAtStop = new Date(now.getTime() + accumulatedDuration * 1000);
 
-                // Check if we already added a stop very close to this one
                 const alreadyAdded = intermediateStops.some(s => s.name === waypointName);
 
                 if (!alreadyAdded) {
@@ -623,7 +627,7 @@ const TrackingPage = () => {
           const polyline = L.polyline(latLngs, {
             color: "hsl(224, 76%, 55%)",
             weight: 4,
-            dashArray: "10, 10" // Visual indicator it's a direct line
+            dashArray: "10, 10" 
           }).addTo(routingLayer.current!);
 
           L.marker(fromCoords).addTo(routingLayer.current!).bindTooltip(`From: ${from}`);
@@ -649,14 +653,12 @@ const TrackingPage = () => {
 
           mapInstance.fitBounds(polyline.getBounds(), { padding: [30, 30] });
 
-          // Set fallback ETA and distance so animation and status work
           const fallbackDistance = activeRoute?.distance_km || 10;
           const fallbackEta = activeRoute?.etaMinutes || 30;
           setDistance(fallbackDistance.toFixed(1) + " km");
           setEtaMinutes(fallbackEta);
           setEta(fallbackEta + " mins");
 
-          // Fallback UI timeline for when OSRM fails
           const formatTime = (date: Date) =>
             date.toLocaleTimeString([], {
               hour: "numeric",
@@ -720,16 +722,12 @@ const TrackingPage = () => {
     if (routeCoords.length === 0 || !busMarkerRef.current || etaMinutes === 0)
       return;
 
-    // Speed: 25 km/h -> 25000 m / 3600 s ≈ 6.94 m/s
     const speedMs = 6.94;
-    const updateIntervalSeconds = 4; // Update every 4 seconds
+    const updateIntervalSeconds = 4;
     const distanceToMovePerUpdate = speedMs * updateIntervalSeconds;
 
     const interval = setInterval(() => {
       setProgress((prev) => {
-        // Calculate total route distance in meters if possible
-        // For simplicity, we'll still use the 0-100 progress but scale it by real-world duration
-        // Total distance is route.distance_km * 1000
         const totalDistanceMeters = (activeRoute?.distance_km || 10) * 1000;
         const progressIncrement = (distanceToMovePerUpdate / totalDistanceMeters) * 100;
 
@@ -756,8 +754,6 @@ const TrackingPage = () => {
   const isValidCoord = (lat?: number, lon?: number) =>
     lat !== undefined && lon !== undefined && lat > 15 && lat < 45 && lon > 65 && lon < 95;
 
-  // For outstation, we often don't have coords in dataset, so we rely on geocoding
-  // Only show error if geocoding failed AND we don't have explicit dataset coords
   const [dataError, setDataError] = useState(false);
 
   useEffect(() => {
@@ -768,7 +764,6 @@ const TrackingPage = () => {
       const lonTo = Number(activeRoute?.lon_to || activeRoute?.end_lon);
 
       if (!isValidCoord(latFrom, lonFrom) || !isValidCoord(latTo, lonTo)) {
-        // Only set error if we don't even have stop names to geocode
         if (!from || !to) {
           setDataError(true);
         }
@@ -845,12 +840,11 @@ const TrackingPage = () => {
           </div>
         )}
 
-        {/* Popular Routes Section - Always visible if no specific route was selected to come here */}
+        {/* Popular Routes Section */}
         <MostUsedRoutes currentRouteId={location.state?.route ? (activeRoute?.route_id || activeRoute?.route_no) : undefined} />
 
         {/* Top Status Cards Grid */}
         <div className={`grid grid-cols-2 gap-3 transition-opacity duration-300 ${!activeRoute ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
-          {/* Current Status */}
           <div className="bg-card border border-border rounded-xl p-3 shadow-sm flex flex-col justify-center">
             <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-1">
               {t("tracking.currentStatus")}
@@ -867,7 +861,6 @@ const TrackingPage = () => {
             })()}
           </div>
 
-          {/* Next Stop */}
           <div className="bg-card border border-border rounded-xl p-3 shadow-sm flex flex-col justify-center">
             <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mb-1">
               {t("tracking.nextStop")}
@@ -878,7 +871,6 @@ const TrackingPage = () => {
               </p>
             ) : (
               (() => {
-                // Find the next stop where the bus hasn't reached yet
                 const nextStop =
                   dynamicStops.find((s) => progress < s.progressAnchor) ||
                   dynamicStops[dynamicStops.length - 1];
@@ -913,9 +905,7 @@ const TrackingPage = () => {
           </h3>
 
           <div className="relative">
-            {/* Background Thick Line */}
             <div className="absolute top-6 bottom-8 left-[73px] w-1.5 bg-blue-100 rounded-full overflow-hidden z-0">
-              {/* Active Filled Line */}
               <div
                 className="absolute top-0 left-0 w-full bg-blue-500 transition-all duration-1000 ease-linear"
                 style={{ height: `${progress}%` }}
@@ -932,7 +922,6 @@ const TrackingPage = () => {
 
                 return (
                   <div key={index} className="flex items-stretch min-h-[60px]">
-                    {/* Left: Time */}
                     <div className="w-[60px] flex flex-col justify-start items-end pr-3 py-2 shrink-0 border-r-4 border-transparent">
                       <span
                         className={`text-[10px] font-medium leading-none ${isPast ? "text-muted-foreground/60" : "text-foreground/80"}`}
@@ -950,7 +939,6 @@ const TrackingPage = () => {
                       )}
                     </div>
 
-                    {/* Center: Node */}
                     <div className="w-8 flex justify-center py-2 shrink-0 relative z-10">
                       {isPast ? (
                         <div className="w-3 h-3 rounded-full bg-blue-400 border border-white shadow-[0_0_0_2px_background] mt-0.5" />
@@ -964,7 +952,6 @@ const TrackingPage = () => {
                       )}
                     </div>
 
-                    {/* Right: Info */}
                     <div
                       className={`flex-1 pl-3 py-1.5 ${!stop.isTerminal ? "border-b border-border/40" : ""} mb-2`}
                     >

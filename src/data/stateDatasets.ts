@@ -1,83 +1,85 @@
-import { loadRadarBuses, RadarBus } from '../utils/RadarLoader';
-import { loadBusRoutes, RouteEntry } from '../utils/ExcelLoader';
-import { loadDelhiUPRoutes, DelhiUPRoute } from './loadDelhiUPRoutes';
+import { supabase } from '../lib/supabase';
 
-export type UnifiedRoute = RadarBus;
-
-export const stateDatasets: Record<string, {
-    intercity: () => Promise<any[]>,
-    outstation: () => Promise<RadarBus[]>
-}> = {
-    "Chandigarh": {
-        intercity: async () => await loadBusRoutes(),
-        outstation: async () => {
-            const routes = await loadRadarBuses();
-            return routes.filter(r =>
-                (r.start_stop && r.start_stop.includes("Chandigarh")) ||
-                (r.end_stop && r.end_stop.includes("Chandigarh"))
-            );
-        }
-    },
-    "Punjab": {
-        intercity: async () => await loadBusRoutes(),
-        outstation: async () => {
-            const routes = await loadRadarBuses();
-            return routes.filter(r =>
-                ["Ludhiana", "Amritsar", "Jalandhar", "Patiala", "Bathinda", "Hoshiarpur", "Pathankot", "Ferozepur", "Moga", "Kapurthala"]
-                    .includes(r.start_stop) ||
-                ["Ludhiana", "Amritsar", "Jalandhar", "Patiala", "Bathinda", "Hoshiarpur", "Pathankot", "Ferozepur", "Moga", "Kapurthala"]
-                    .includes(r.end_stop)
-            );
-        }
-    },
-    "Haryana": {
-        intercity: async () => await loadBusRoutes(),
-        outstation: async () => {
-            const routes = await loadRadarBuses();
-            return routes.filter(r => r.operator === "Haryana Roadways" || r.highway === "NH44");
-        }
-    },
-    "Delhi": {
-        intercity: async () => [], // No intercity dataset for Delhi yet
-        outstation: async () => {
-            const routes = await loadDelhiUPRoutes("Delhi");
-            return routes.map(mapToRadarBus);
-        }
-    },
-    "Uttar Pradesh": {
-        intercity: async () => [], // No intercity dataset for UP yet
-        outstation: async () => {
-            const routes = await loadDelhiUPRoutes("Uttar Pradesh");
-            return routes.map(mapToRadarBus);
-        }
-    }
-};
-
-function mapToRadarBus(route: DelhiUPRoute): RadarBus {
-    return {
-        route_id: route.route_id,
-        start_stop: route.from_city,
-        stop_1: route.stop_1,
-        stop_2: route.stop_2,
-        end_stop: route.to_city,
-        distance_km: route.distance_km,
-        eta_min: route.eta_min,
-        price_inr: route.price_inr,
-        crowd: route.crowd,
-        operator: route.operator,
-        route_type: "outstation",
-        start_lat: route.origin_lat,
-        start_lon: route.origin_lon,
-        end_lat: route.destination_lat,
-        end_lon: route.destination_lon,
-        highway: route.to_city.includes("Delhi") ? "NH44" : "NH19"
-    };
+export interface UnifiedRoute {
+  route_id: string;
+  start_stop: string;
+  stop_1: string;
+  stop_2: string;
+  end_stop: string;
+  distance_km: number;
+  eta_min: number;
+  price_inr: number;
+  crowd: string;
+  operator: string;
+  route_type: string;
+  start_lat: number;
+  start_lon: number;
+  end_lat: number;
+  end_lon: number;
+  highway: string;
 }
 
-export const getRoutesForState = async (stateName: string, tripType: "intercity" | "outstation" = "outstation"): Promise<any[]> => {
-    const stateEntry = stateDatasets[stateName];
-    if (stateEntry) {
-        return await stateEntry[tripType]();
+/**
+ * Migration Bridge: Maps Supabase Route data to a unified format
+ * to ensure the UI doesn't break during refactoring.
+ */
+function mapSupabaseToUnifiedRoute(route: any): UnifiedRoute {
+  return {
+    route_id: route.id?.toString() || 'unknown',
+    start_stop: route.source?.name || 'Unknown',
+    stop_1: '', // Intermediate stops are handled separately now
+    stop_2: '',
+    end_stop: route.destination?.name || 'Unknown',
+    distance_km: Number(route.distance_km || 0),
+    eta_min: Math.round(Number(route.distance_km || 0) * 1.5), // Heuristic estimate
+    price_inr: Number(route.pricing?.min_fare || route.base_fare || 0),
+    crowd: 'Low', // Placeholder for upcoming AI integration
+    operator: 'BusConnect Express',
+    route_type: 'outstation',
+    start_lat: route.source?.latitude || 0,
+    start_lon: route.source?.longitude || 0,
+    end_lat: route.destination?.latitude || 0,
+    end_lon: route.destination?.longitude || 0,
+    highway: route.destination?.name?.includes('Delhi') ? 'NH44' : 'NH7'
+  };
+}
+
+export const getRoutesForState = async (stateName: string, tripType: "intercity" | "outstation" = "outstation"): Promise<UnifiedRoute[]> => {
+    try {
+        // Query routes with nested joins for source/destination/state data
+        const { data, error } = await supabase
+            .from('routes')
+            .select(`
+                *,
+                source:source_stop_id (
+                    name, 
+                    latitude, 
+                    longitude, 
+                    district:district_id (
+                        state:state_id (name)
+                    )
+                ),
+                destination:destination_stop_id (
+                    name, 
+                    latitude, 
+                    longitude
+                ),
+                pricing:pricing_configs (*)
+            `);
+
+        if (error) throw error;
+
+        if (!data) return [];
+
+        // Filter routes where the source state matches the requested state
+        const stateRoutes = data.filter((r: any) => {
+            const sourceState = (r.source as any)?.district?.state?.name;
+            return sourceState === stateName;
+        });
+
+        return stateRoutes.map(mapSupabaseToUnifiedRoute);
+    } catch (err) {
+        console.error(`Supabase fetch failed for ${stateName}:`, err);
+        return [];
     }
-    return [];
 };

@@ -1,5 +1,4 @@
-import { loadBusRoutes } from "../utils/ExcelLoader";
-import { authService } from "./authService";
+import { busService } from "./busService";
 
 export interface DashboardMetrics {
   totalRoutes: number;
@@ -42,28 +41,26 @@ export interface AIRecommendation {
   routeId?: string;
 }
 
-import { firestoreService } from "./firestoreService";
-
 export const adminService = {
   // Helpers
   getBookings: async () => {
-    return await firestoreService.getAllBookings();
+    return await busService.getAllBookings();
   },
 
   getUsers: async () => {
-    return await firestoreService.getAllUsers();
+    return await busService.getAllUsers();
   },
 
   getDashboardMetrics: async (): Promise<DashboardMetrics> => {
-    const routes = await loadBusRoutes();
+    const routes = await busService.getAllRoutes();
     const users = await adminService.getUsers();
     const bookings = await adminService.getBookings();
 
-    // Calculate revenue from mock "myBookings" list
-    const todaysRevenue = bookings.reduce((sum: number, b: any) => sum + (Number(b.price) || 0), 0) + 12540; // Add baseline mock revenue
+    // Calculate revenue from Supabase bookings
+    const todaysRevenue = bookings.reduce((sum: number, b: any) => sum + (Number(b.fare) || 0), 0) + 12540; // Add baseline mock revenue
 
     // Count unique routes
-    const uniqueRoutes = new Set(routes.map(r => r.route_no)).size;
+    const uniqueRoutes = routes.length;
 
     return {
       totalRoutes: uniqueRoutes > 0 ? uniqueRoutes : 42, // fallback if fetch fails
@@ -74,58 +71,52 @@ export const adminService = {
   },
 
   getLiveBuses: async (): Promise<LiveBus[]> => {
-    const routes = await loadBusRoutes();
+    const routes = await busService.getAllRoutes();
     const bookings = await adminService.getBookings();
 
     if (routes.length === 0) return [];
 
-    // Map the first few routes as "live buses" and adjust occupancy based on bookings
     const driverNames = ["Raman Singh", "Gurpreet Singh", "Jaswinder Kumar", "Amit Sharma", "Baljit Singh", "Sundeep Yadav"];
     
-    return routes.slice(0, 5).map((r, i) => {
-      // Find if this route was booked recently
-      const routeBookings = bookings.filter((b: any) => b.from === r.from_stop || b.to === r.to_stop).length;
+    return routes.slice(0, 5).map((r: any, i) => {
+      const fromName = r.source?.name || "Terminal A";
+      const toName = r.destination?.name || "Terminal B";
       
-      const isBooked = routeBookings > 0;
-      const baseOccupancy = 40 + (i * 10);
-      const randomOffset = Math.floor(Math.random() * 20);
-
-      // Deterministic but "random-looking" phone numbers based on route index
-      const dummyPhone = `+91 98765 ${40000 + (i * 1234)}`;
-
       return {
         id: `bus_${i}`,
-        routeNo: r.route_no,
+        routeNo: r.id.toString(),
         status: i % 4 === 0 ? "Warning" : (i % 3 === 0 ? "Delayed" : "On Time"),
         time: "Just now",
-        occupancy: Math.min(100, isBooked ? baseOccupancy + randomOffset + 30 : baseOccupancy + randomOffset), // Boost occupancy if booked
-        from: r.from_stop,
-        to: r.to_stop,
+        occupancy: 40 + (i * 10) + Math.floor(Math.random() * 20),
+        from: fromName,
+        to: toName,
         driverName: driverNames[i % driverNames.length],
-        driverPhone: dummyPhone,
+        driverPhone: `+91 98765 ${40000 + (i * 1234)}`,
       };
     });
   },
 
   getRoutePerformance: async (): Promise<RoutePerformance[]> => {
-    const routes = await loadBusRoutes();
+    const routes = await busService.getAllRoutes();
     const bookings = await adminService.getBookings();
     
-    // Group routes
-    const grouped = routes.slice(0, 10).map((r, i) => {
-      const routeBookings = bookings.filter((b: any) => b.from === r.from_stop || b.to === r.to_stop);
-      const bookingRevenue = routeBookings.reduce((sum: number, b: any) => sum + Number(b.price), 0);
+    const grouped = routes.slice(0, 10).map((r: any, i) => {
+      const routeBookings = bookings.filter((b: any) => b.route_id === r.id);
+      const bookingRevenue = routeBookings.reduce((sum: number, b: any) => sum + Number(b.fare), 0);
       
+      const fromName = r.source?.name || "Terminal A";
+      const toName = r.destination?.name || "Terminal B";
+
       return {
-        id: r.route_no,
-        name: `${r.from_stop} → ${r.to_stop}`,
-        from: r.from_stop,
-        to: r.to_stop,
+        id: r.id.toString(),
+        name: `${fromName} → ${toName}`,
+        from: fromName,
+        to: toName,
         activeBuses: Math.floor(Math.random() * 5) + 2,
         occupancyPercent: Math.min(100, 45 + (routeBookings.length * 15) + Math.floor(Math.random() * 20)),
         onTimePercent: 85 + Math.floor(Math.random() * 10),
         revenue: bookingRevenue > 0 ? bookingRevenue + 1200 : 450 + (i * 300),
-        trend: bookingRevenue > 0 ? "up" : (i % 3 === 0 ? "down" : "neutral") as "up" | "down" | "neutral"
+        trend: bookingRevenue > 1500 ? "up" : (i % 3 === 0 ? "down" : "neutral") as "up" | "down" | "neutral"
       };
     });
 
@@ -137,7 +128,6 @@ export const adminService = {
     
     const recommendations: AIRecommendation[] = [];
 
-    // Find highest occupancy route
     const highOcc = performances.find(p => p.occupancyPercent > 85);
     if (highOcc) {
       recommendations.push({
@@ -160,7 +150,6 @@ export const adminService = {
       });
     }
 
-    // Find lowest on-time route
     const lowOnTime = performances.find(p => p.onTimePercent < 90);
     if (lowOnTime) {
       recommendations.push({

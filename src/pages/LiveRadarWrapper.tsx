@@ -1,31 +1,26 @@
 // ============================================================
-// LiveRadarWrapper — Wraps existing Radar with Firestore buses
+// LiveRadarWrapper — Wraps existing Radar with Supabase buses
 // ============================================================
+// Migrated from Firestore. 
 // Renders the existing HighwayRadarPage and overlays live
-// Firestore bus markers. Uses a Leaflet map tracker to capture
-// the map instance created by the child page.
+// Supabase bus markers.
 // ============================================================
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as L from "leaflet";
 import HighwayRadarPage from "../pages/HighwayRadarPage";
-import { useFirestoreLiveBuses, type FirestoreLiveBus } from "../hooks/useFirestoreLiveBuses";
+import { useSupabaseLiveBuses, type SupabaseLiveBus } from "../hooks/useSupabaseLiveBuses";
 
 // ─────────────────────────────────────────────────
 // GLOBAL MAP TRACKER
 // ─────────────────────────────────────────────────
-// Intercept L.Map creation to capture the map instance.
-// This runs only once and stores all created maps.
 
 const _allMaps: L.Map[] = [];
-const _originalMapInit = L.Map.prototype.initialize;
-
 if (!(L.Map.prototype as any).__liveTracked) {
     const origInit = L.Map.prototype.initialize;
     (L.Map.prototype as any).initialize = function (this: L.Map, ...args: any[]) {
         origInit.apply(this, args);
         _allMaps.push(this);
-        // Cleanup on removal
         this.on("remove", () => {
             const idx = _allMaps.indexOf(this);
             if (idx !== -1) _allMaps.splice(idx, 1);
@@ -44,17 +39,11 @@ const getLatestMap = (): L.Map | null => {
 
 const getAgeMs = (lastUpdated: any): number => {
     if (!lastUpdated) return Infinity;
-    const ms = lastUpdated?.toMillis
-        ? lastUpdated.toMillis()
-        : lastUpdated?.seconds
-        ? lastUpdated.seconds * 1000
-        : typeof lastUpdated === "number"
-        ? lastUpdated
-        : 0;
+    const ms = new Date(lastUpdated).getTime();
     return ms > 0 ? Date.now() - ms : Infinity;
 };
 
-const createLiveMarkerHtml = (bus: FirestoreLiveBus): string => {
+const createLiveMarkerHtml = (bus: SupabaseLiveBus): string => {
     const ageSec = Math.round(getAgeMs(bus.lastUpdated) / 1000);
     const ageLabel = ageSec < 60 ? `${ageSec}s` : `${Math.floor(ageSec / 60)}m`;
     const isRecent = ageSec < 30;
@@ -77,7 +66,7 @@ const createLiveMarkerHtml = (bus: FirestoreLiveBus): string => {
 </div>`;
 };
 
-const createLivePopupHtml = (bus: FirestoreLiveBus): string => {
+const createLivePopupHtml = (bus: SupabaseLiveBus): string => {
     const ageSec = Math.round(getAgeMs(bus.lastUpdated) / 1000);
     const ageLabel = ageSec < 5 ? "Just now" : ageSec < 60 ? `${ageSec}s ago` : `${Math.floor(ageSec / 60)}m ago`;
 
@@ -118,17 +107,12 @@ const createLivePopupHtml = (bus: FirestoreLiveBus): string => {
 </div>`;
 };
 
-// ─────────────────────────────────────────────────
-// COMPONENT
-// ─────────────────────────────────────────────────
-
 const LiveRadarWrapper = () => {
     const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
     const liveLayerRef = useRef<L.LayerGroup | null>(null);
     const mapRef = useRef<L.Map | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // Get user location
     useEffect(() => {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(
@@ -141,14 +125,12 @@ const LiveRadarWrapper = () => {
         }
     }, []);
 
-    // Fetch live buses from Firestore
-    const { liveBuses } = useFirestoreLiveBuses(userLocation, {
+    const { liveBuses } = useSupabaseLiveBuses(userLocation, {
         maxRadiusKm: 50,
         maxAgeSec: 300,
     });
 
-    // Update markers whenever liveBuses change
-    const updateMarkers = useCallback((map: L.Map, buses: FirestoreLiveBus[]) => {
+    const updateMarkers = useCallback((map: L.Map, buses: SupabaseLiveBus[]) => {
         if (!liveLayerRef.current) {
             liveLayerRef.current = L.layerGroup().addTo(map);
         }
@@ -176,13 +158,10 @@ const LiveRadarWrapper = () => {
         });
     }, []);
 
-    // Poll for the map instance, then update markers
     useEffect(() => {
         const tryUpdate = () => {
-            // Try to reuse existing ref
             if (mapRef.current) {
                 try {
-                    // Verify map is still valid
                     mapRef.current.getCenter();
                     updateMarkers(mapRef.current, liveBuses);
                     return true;
@@ -192,20 +171,16 @@ const LiveRadarWrapper = () => {
                 }
             }
 
-            // Find the map via our tracker
             const map = getLatestMap();
             if (map) {
                 mapRef.current = map;
                 updateMarkers(map, liveBuses);
                 return true;
             }
-
             return false;
         };
 
-        // Try immediately
         if (!tryUpdate()) {
-            // Poll every 300ms for up to 15 seconds
             let attempts = 0;
             pollRef.current = setInterval(() => {
                 attempts++;
@@ -226,31 +201,12 @@ const LiveRadarWrapper = () => {
         };
     }, [liveBuses, updateMarkers]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (liveLayerRef.current) {
-                liveLayerRef.current.clearLayers();
-                liveLayerRef.current = null;
-            }
-            mapRef.current = null;
-        };
-    }, []);
-
     return (
         <>
             <HighwayRadarPage />
-
-            {/* Floating live bus indicator */}
             {liveBuses.length > 0 && (
                 <div id="live-bus-count-badge" className="fixed bottom-20 left-1/2 -translate-x-1/2 z-[2000]">
-                    <div
-                        className="bg-green-600 text-white px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2.5"
-                        style={{
-                            animation: "liveRadarFadeIn 0.5s ease-out",
-                            boxShadow: "0 8px 32px rgba(22, 163, 74, 0.4)",
-                        }}
-                    >
+                    <div className="bg-green-600 text-white px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2.5">
                         <span className="w-2.5 h-2.5 bg-white rounded-full animate-pulse" />
                         <span className="text-xs font-bold tracking-wide">
                             {liveBuses.length} Live Bus{liveBuses.length !== 1 ? "es" : ""} Detected
@@ -258,15 +214,10 @@ const LiveRadarWrapper = () => {
                     </div>
                 </div>
             )}
-
             <style>{`
                 @keyframes livePulseRadar {
                     0%, 100% { transform: scale(1); opacity: 1; }
                     50% { transform: scale(1.8); opacity: 0.4; }
-                }
-                @keyframes liveRadarFadeIn {
-                    from { opacity: 0; transform: translate(-50%, 20px); }
-                    to { opacity: 1; transform: translate(-50%, 0); }
                 }
             `}</style>
         </>

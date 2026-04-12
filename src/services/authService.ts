@@ -1,5 +1,7 @@
-import { firestoreService } from "./firestoreService";
+import { offlineBusService } from "./offline/OfflineBusService";
+import { busService } from "./busService";
 import { auth } from "../lib/firebase";
+import { supabase } from "../lib/supabase";
 import { 
     createUserWithEmailAndPassword, 
     signInWithEmailAndPassword, 
@@ -54,8 +56,8 @@ export const authService = {
             // Update display name
             await updateProfile(user, { displayName: name });
 
-            // Sync profile to new Firestore collections
-            await firestoreService.createUserProfile(user.uid, name, email, 'email');
+            // Sync profile to Supabase
+            await busService.syncUser(user.uid, { name, email, role: 'customer' });
 
             const userData: User = {
                 id: user.uid,
@@ -83,9 +85,9 @@ export const authService = {
                 isEmailVerified: user.emailVerified
             };
 
-            // Auto-sync user to Firestore on every login
-            firestoreService.createOrUpdateUser(user.uid, userData.name, email, 'email')
-                .catch(err => console.error("Login Firestore sync:", err));
+            // Auto-sync user to Supabase on every login
+            busService.syncUser(user.uid, { name: userData.name, email, role: 'customer' })
+                .catch(err => console.error("Login Supabase sync:", err));
 
             localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(userData));
             return { success: true };
@@ -94,14 +96,19 @@ export const authService = {
         }
     },
 
-    // Check if phone number is already registered inside Firestore
+    // Check if phone number is already registered inside Supabase
     checkPhoneStatus: async (phone: string): Promise<{ exists: boolean }> => {
         let formattedPhone = phone.trim();
         if (!formattedPhone.startsWith("+")) {
             formattedPhone = "+91" + formattedPhone;
         }
-        const exists = await firestoreService.checkUserExistsByPhone(formattedPhone);
-        return { exists };
+        const { data, error } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('phone', formattedPhone)
+            .single();
+            
+        return { exists: !!data && !error };
     },
 
     // Phone Authentication - Step 1: Send OTP (no reCAPTCHA needed)
@@ -177,8 +184,8 @@ export const authService = {
                 isPhoneVerified: true
             };
 
-            // Sync profile to new Firestore collections
-            await firestoreService.createUserProfile(firebaseUser.uid, userData.name, userData.phoneOrEmail, 'phone');
+            // Sync profile to Supabase
+            await offlineBusService.syncUser(firebaseUser.uid, { name: userData.name, phone: userData.phoneOrEmail, role: 'customer' });
 
             localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(userData));
 

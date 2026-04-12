@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import PageShell from "@/components/PageShell";
 import { authService } from "../services/authService";
-import { firestoreService } from "../services/firestoreService";
+import { busService } from "../services/busService";
 import { useLanguage } from "@/lib/language";
 
 interface UserProfile {
@@ -56,18 +56,18 @@ const AccountPage = () => {
     return DEFAULT_PROFILE;
   });
 
-  // Fetch real profile from Firestore on mount
+  // Fetch real profile from Supabase on mount
   useEffect(() => {
     const fetchProfile = async () => {
       const currentUser = authService.getCurrentUser();
       if (currentUser) {
-        const firestoreProfile = await firestoreService.getUserProfile(currentUser.id);
-        if (firestoreProfile) {
+        const supabaseProfile = await busService.getUserProfile(currentUser.id);
+        if (supabaseProfile) {
           setProfile(prev => ({
             ...prev,
-            name: firestoreProfile.name || prev.name,
-            email: firestoreProfile.email || prev.email,
-            phone: firestoreProfile.phone || prev.phone,
+            name: supabaseProfile.name || prev.name,
+            email: supabaseProfile.email || prev.email,
+            phone: supabaseProfile.phone || prev.phone,
           }));
         }
       }
@@ -105,19 +105,19 @@ const AccountPage = () => {
     setEditing(false);
     toast.success(t("account.profileUpdated"));
 
-    // Auto-sync profile to Firestore
+    // Auto-sync profile to Supabase
     const currentUser = authService.getCurrentUser();
     if (currentUser) {
-      firestoreService.saveUserProfile(currentUser.id, {
+      busService.syncUser(currentUser.id, {
         name: draft.name,
         email: draft.email,
         phone: draft.phone,
-      }).catch(err => console.error("Profile Firestore sync:", err));
+      }).catch(err => console.error("Profile Supabase sync:", err));
     }
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("userProfile"); // Keep this to clear local profile draft if desired
+    localStorage.removeItem("userProfile"); 
     authService.logout();
     toast.success(t("account.loggedOut"));
     navigate("/login");

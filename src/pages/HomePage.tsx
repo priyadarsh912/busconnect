@@ -121,7 +121,8 @@ const HomePage = () => {
             className={`relative rounded-xl overflow-hidden h-36 group ${state.status === "UPCOMING" ? "cursor-not-allowed opacity-80" : ""}`}
           >
             <img src={state.img} alt={state.name} className={`w-full h-full object-cover ${state.status !== "UPCOMING" ? "group-hover:scale-110" : ""} transition-transform duration-500`} />
-            <div className={`absolute inset-0 bg-gradient-to-t ${state.status === "UPCOMING" ? "from-black/80 to-black/20" : "from-foreground/70 to-transparent"}`} />
+            {/* Improved gradient: using black consistently to avoid white blur in dark mode and ensure text legibility */}
+            <div className={`absolute inset-0 bg-gradient-to-t ${state.status === "UPCOMING" ? "from-black/90 via-black/40 to-black/10" : "from-black/80 via-black/20 to-transparent"}`} />
 
             {state.status === "ACTIVE" && (
               <span className="absolute top-2 right-2 bg-primary text-primary-foreground text-[10px] font-bold px-2 py-0.5 rounded-full">
@@ -137,8 +138,8 @@ const HomePage = () => {
             )}
 
             <div className="absolute bottom-3 left-3 text-left">
-              <p className="text-white font-bold text-sm">{state.name}</p>
-              <p className="text-white/80 text-xs line-clamp-1">{t(state.subtitleKey)}</p>
+              <p className="text-white font-bold text-sm tracking-tight">{state.name}</p>
+              <p className="text-white/90 text-[11px] line-clamp-1 font-medium">{t(state.subtitleKey)}</p>
             </div>
           </motion.button>
         ))}

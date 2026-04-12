@@ -1,6 +1,6 @@
 // src/utils/RouteHistoryManager.ts
 import { authService } from '../services/authService';
-import { firestoreService } from '../services/firestoreService';
+import { busService } from '../services/busService';
 
 export interface RouteUsage {
     route_id: string;
@@ -28,7 +28,6 @@ export const RouteHistoryManager = {
             const origin = (route.from_stop || route.start_stop || route.origin || route.start_city || route.from || '').trim();
             const destination = (route.to_stop || route.end_stop || route.destination || route.end_city || route.to || '').trim();
 
-            // Skip tracking if we have NO useful name information (prevents "Unknown -> Unknown" spam)
             if (!origin && !destination) {
                 console.warn('Skipping route tracking: No origin or destination found', route);
                 return;
@@ -37,10 +36,8 @@ export const RouteHistoryManager = {
             const finalOrigin = origin || 'Unknown';
             const finalDestination = destination || 'Unknown';
 
-            // Generate a stable ID if not present
             const routeId = route.route_id || route.route_no || route.id || `${finalOrigin}-${finalDestination}`;
 
-            // Clean up existing "Unknown" entries if we're now tracking the same route with better names
             if (finalOrigin !== 'Unknown' && finalDestination !== 'Unknown') {
                 history = history.filter(h => !(h.origin === 'Unknown' && h.destination === 'Unknown') && !(h.route_id === routeId && (h.origin === 'Unknown' || h.destination === 'Unknown')));
             }
@@ -53,7 +50,6 @@ export const RouteHistoryManager = {
             if (existingIndex !== -1) {
                 history[existingIndex].usage += 1;
                 history[existingIndex].lastUsed = Date.now();
-                // Merge raw data, preserving any explicit coordinates
                 history[existingIndex].rawRouteData = { ...history[existingIndex].rawRouteData, ...route };
             } else {
                 history.push({
@@ -67,20 +63,15 @@ export const RouteHistoryManager = {
                 });
             }
 
-
-            // Sort by usage and limit to keep storage clean (optional but good practice)
             history.sort((a, b) => b.usage - a.usage);
 
-            // Save back to localStorage
             localStorage.setItem(STORAGE_KEY, JSON.stringify(history.slice(0, 20)));
 
-            // Cloud sync to Firestore
+            // Cloud sync to Supabase
             const currentUser = authService.getCurrentUser();
             if (currentUser) {
-                // Ignore "Unknown" origins/destinations for cloud analytics
                 if (finalOrigin !== 'Unknown' && finalDestination !== 'Unknown') {
-                    // Fire and forget
-                    firestoreService.saveSearchHistory(
+                    busService.saveSearchHistory(
                         currentUser.id, 
                         finalOrigin, 
                         finalDestination, 
@@ -119,20 +110,20 @@ export const RouteHistoryManager = {
     },
 
     /**
-     * Sync history from cloud to local storage
+     * Sync history from cloud to local storage (Supabase version)
      */
     syncWithCloud: async () => {
         try {
             const currentUser = authService.getCurrentUser();
             if (currentUser) {
-                const cloudHistory = await firestoreService.getRouteHistory(currentUser.id);
+                const cloudHistory = await busService.getSearchHistory(currentUser.id);
                 if (cloudHistory && cloudHistory.length > 0) {
                     const historyJson = localStorage.getItem(STORAGE_KEY);
                     let localHistory: RouteUsage[] = historyJson ? JSON.parse(historyJson) : [];
                     
                     cloudHistory.forEach((ch: any) => {
                         const existing = localHistory.find(lh => 
-                            lh.origin === ch.from && lh.destination === ch.to && lh.tripType === (ch.tripType || 'intercity')
+                            lh.origin === ch.from && lh.destination === ch.to && lh.tripType === (ch.trip_type || 'intercity')
                         );
                         if (!existing) {
                             localHistory.push({
@@ -140,9 +131,9 @@ export const RouteHistoryManager = {
                                 origin: ch.from,
                                 destination: ch.to,
                                 usage: 1,
-                                tripType: ch.tripType || 'intercity',
+                                tripType: ch.trip_type || 'intercity',
                                 rawRouteData: {},
-                                lastUsed: ch.searchedAt ? ch.searchedAt.toMillis?.() || Date.now() : Date.now()
+                                lastUsed: ch.created_at ? new Date(ch.created_at).getTime() : Date.now()
                             });
                         }
                     });

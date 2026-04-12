@@ -9,43 +9,8 @@ import { useOutstationRoutes } from "@/hooks/useOutstationRoutes";
 import { RouteEntry } from "@/utils/ExcelLoader";
 import { OutstationRouteEntry } from "@/utils/OutstationLoader";
 import { useLanguage } from "@/lib/language";
-import { firestoreService } from "../services/firestoreService";
 import { authService } from "../services/authService";
-
-// City → State mapping for filtering
-const CITY_STATE: Record<string, string[]> = {
-  Chandigarh: ["Chandigarh", "Punjab", "Haryana"],
-  Mohali: ["Punjab", "Chandigarh"],
-  Zirakpur: ["Punjab", "Chandigarh"],
-  Ropar: ["Punjab"],
-  Ludhiana: ["Punjab"],
-  Amritsar: ["Punjab"],
-  Jalandhar: ["Punjab"],
-  Patiala: ["Punjab"],
-  Bathinda: ["Punjab"],
-  Hoshiarpur: ["Punjab"],
-  Pathankot: ["Punjab"],
-  Ferozepur: ["Punjab"],
-  Moga: ["Punjab"],
-  Kapurthala: ["Punjab"],
-  Faridkot: ["Punjab"],
-  Rajpura: ["Punjab"],
-  Ambala: ["Haryana"],
-  Kurukshetra: ["Haryana"],
-  Karnal: ["Haryana"],
-  Panipat: ["Haryana"],
-  Sonipat: ["Haryana"],
-  Faridabad: ["Haryana"],
-  Gurugram: ["Haryana"],
-  Hisar: ["Haryana"],
-  Rohtak: ["Haryana"],
-  Delhi: ["Delhi", "Haryana"],
-};
-
-const getCitiesForState = (state: string): string[] =>
-  Object.keys(CITY_STATE).filter((city) => CITY_STATE[city].includes(state));
-
-// parseCSV is now replaced by loadBusRoutes from utils/ExcelLoader
+import { busService } from "../services/busService";
 
 const estimateTime = (dist: number) => {
   const hrs = Math.floor(dist / 60);
@@ -54,8 +19,6 @@ const estimateTime = (dist: number) => {
   if (mins === 0) return `~${hrs} hr`;
   return `~${hrs}h ${mins}m`;
 };
-
-const estimateFare = (dist: number) => Math.round(dist * 1.5);
 
 const fadeUp = {
   initial: { opacity: 0, y: 18 },
@@ -117,7 +80,7 @@ const RoutesPage = () => {
   }, [tripType, origin, destination, intercity.isLoading, outstation.isLoading, intercity.routes, outstation.routes]);
 
   const tripLabel = tripType === "intercity" ? t("routes.intercity") : t("routes.outstation");
-  const accentColor = tripType === "intercity" ? "#4f46e5" : "#10b981"; // emerald-500
+  const accentColor = tripType === "intercity" ? "#4f46e5" : "#10b981"; 
   const accentBg = tripType === "intercity"
     ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
     : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300";
@@ -181,45 +144,16 @@ const RoutesPage = () => {
           <Button onClick={() => navigate(-1)} variant="outline" className="mt-1 rounded-full">
             {t("routes.changeRoute")}
           </Button>
-
-          {origin && (
-            <div className="w-full mt-4 text-left">
-              <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                {t("routes.nearbyRoutesFrom", { origin })}
-              </p>
-              <div className="space-y-2">
-                {(tripType === "intercity"
-                  ? ["Sector 17", "Phase 5", "IT Park", "Phase 7"]
-                  : ["Delhi", "Amritsar", "Ludhiana", "Patiala"])
-                  .filter((c) => c.toLowerCase() !== origin.toLowerCase() && c.toLowerCase() !== destination.toLowerCase())
-                  .slice(0, 3)
-                  .map((city, i) => (
-                    <button
-                      key={i}
-                      onClick={() =>
-                        navigate("/routes", {
-                          state: { state: selectedState, tripType, origin, destination: city },
-                        })
-                      }
-                      className="w-full flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-3 text-sm font-semibold hover:bg-secondary transition-colors text-left"
-                    >
-                      <MapPin className="w-3.5 h-3.5 shrink-0" style={{ color: accentColor }} />
-                      {origin} → {city}
-                    </button>
-                  ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
       {/* Route cards */}
       {!isLoading && routes.length > 0 && (
         <motion.div
-          variants={stagger}
-          initial="initial"
-          animate="animate"
-          className="space-y-3 pb-24"
+            variants={stagger}
+            initial="initial"
+            animate="animate"
+            className="space-y-3 pb-24"
         >
           {routes.map((route, i) => (
             <motion.div
@@ -232,11 +166,10 @@ const RoutesPage = () => {
                 const from = tripType === "intercity" ? (route as RouteEntry).from_stop : ((route as any).start_city || (route as any).start_stop);
                 const to = tripType === "intercity" ? (route as RouteEntry).to_stop : ((route as any).end_city || (route as any).end_stop);
 
-                // Auto-save: search history + user route to Firestore
+                // Auto-save: search history to Supabase
                 const user = authService.getCurrentUser();
                 if (user && from && to) {
-                  firestoreService.saveSearchHistory(user.id, from, to, tripType).catch(() => {});
-                  firestoreService.saveUserRoute(user.id, from, to).catch(() => {});
+                  busService.saveSearchHistory(user.id, from, to, tripType).catch(() => {});
                 }
 
                 navigate("/bus-results", {
@@ -302,12 +235,11 @@ const RoutesPage = () => {
                   className="flex-1 rounded-xl text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
-                    // Auto-save: track route interaction to Firestore
                     const user = authService.getCurrentUser();
                     const from = tripType === "intercity" ? (route as RouteEntry).from_stop : (route as OutstationRouteEntry).start_city;
                     const to = tripType === "intercity" ? (route as RouteEntry).to_stop : (route as OutstationRouteEntry).end_city;
                     if (user && from && to) {
-                      firestoreService.saveUserRoute(user.id, from, to).catch(() => {});
+                      busService.saveSearchHistory(user.id, from, to, tripType).catch(() => {});
                     }
                     navigate("/tracking", { state: { route, tripType } });
                   }}

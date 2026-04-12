@@ -47,6 +47,13 @@ import { LanguageProvider } from "./lib/language";
 import SplashScreen from "./components/SplashScreen";
 import { useState, useEffect } from "react";
 import { notificationService } from "./services/notificationService";
+import { useNotifications } from "./hooks/useNotifications";
+import { sqlService } from "./services/offline/SQLService";
+import { syncEngine } from "./services/offline/SyncEngine";
+import { networkManager } from "./services/offline/NetworkManager";
+import DebugSyncPanel from "./components/DebugSyncPanel";
+import OfflineOverlay from "./components/OfflineOverlay";
+import { analyticsService } from "./services/AnalyticsService";
 
 const queryClient = new QueryClient();
 
@@ -102,10 +109,46 @@ const AnimatedRoutes = () => {
   );
 };
 
+
 const App = () => {
   const [showSplash, setShowSplash] = useState(true);
+  const [isOffline, setIsOffline] = useState(!networkManager.getStatus());
+  const [suppressOffline, setSuppressOffline] = useState(false);
+  
+  // Initialize unified notifications hook (proximity + reminders + location sync)
+  useNotifications();
 
   useEffect(() => {
+    // 1. Track App Open
+    analyticsService.trackAppOpen();
+
+    // 2. Watch location and network status
+    networkManager.onStatusChange((isOnline) => {
+      setIsOffline(!isOnline);
+      if (isOnline) {
+        setSuppressOffline(false); // Reset when online
+        analyticsService.logEvent('offline_mode_exited');
+      } else {
+        analyticsService.logEvent('offline_mode_entered');
+      }
+    });
+
+    // Initialize Offline Architecture
+    const initOffline = async () => {
+      try {
+        await sqlService.initialize();
+        console.log("App: Offline DB Initialized");
+        
+        // Start sync engine processing
+        if (networkManager.getStatus()) {
+          syncEngine.processQueue();
+        }
+      } catch (err) {
+        console.error("App: Offline init error:", err);
+      }
+    };
+    initOffline();
+
     // Set up foreground message listener
     notificationService.listenForMessages();
 
@@ -121,12 +164,23 @@ const App = () => {
             <AnimatePresence>
               {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
             </AnimatePresence>
+            
+            <OfflineOverlay 
+              isOffline={isOffline && !suppressOffline} 
+              onContinueOffline={() => setSuppressOffline(true)}
+              onRetry={() => {
+                // Network check happens automatically, but we can log it
+                console.log("Retrying connection...");
+              }}
+            />
+
             <Toaster />
             <Sonner />
             <BrowserRouter>
               <AnimatedRoutes />
               <SOSButton />
               <BottomNav />
+              <DebugSyncPanel />
             </BrowserRouter>
           </TooltipProvider>
         </QueryClientProvider>

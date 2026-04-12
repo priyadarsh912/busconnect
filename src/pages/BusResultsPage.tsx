@@ -6,11 +6,9 @@ import { Button } from "@/components/ui/button";
 import CrowdBadge from "@/components/CrowdBadge";
 import { useCrowdPrediction } from "@/hooks/useCrowdPrediction";
 import PageShell from "@/components/PageShell";
-import { loadBusRoutes, RouteEntry } from "@/utils/ExcelLoader";
-import { loadOutstationRoutes, OutstationRouteEntry } from "@/utils/OutstationLoader";
 import { validateStops } from "@/utils/corridorUtils";
 import { RouteHistoryManager } from "../utils/RouteHistoryManager";
-import { getRoutesForState } from "@/data/stateDatasets";
+import { getRoutesForState, UnifiedRoute } from "@/data/stateDatasets";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,9 +19,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
-import { firestoreService } from "../services/firestoreService";
 import { authService } from "../services/authService";
+import { busService } from "../services/busService";
+import { notificationService } from "../services/notificationService";
 
 // Define the BusRoute structure to match the CSV + generated fields
 type BusRoute = {
@@ -41,7 +39,6 @@ type BusRoute = {
   duration: string;
   status: string;
   bus_number?: string;
-  // intercity coords
   lat_from?: number;
   lon_from?: number;
   lat_stop?: number;
@@ -50,20 +47,19 @@ type BusRoute = {
   lon_to?: number;
 };
 
-const mapRoutesToBuses = (routes: (RouteEntry | OutstationRouteEntry)[], tripType: string): BusRoute[] => {
+const mapRoutesToBuses = (routes: UnifiedRoute[], tripType: string): BusRoute[] => {
   return routes.map((r, i) => {
-    const from_stop = tripType === "intercity" ? (r as RouteEntry).from_stop : ((r as any).start_city || (r as any).start_stop);
-    const to_stop = tripType === "intercity" ? (r as RouteEntry).to_stop : ((r as any).end_city || (r as any).end_stop);
+    const from_stop = r.start_stop || 'Unknown';
+    const to_stop = r.end_stop || 'Unknown';
 
-    // Validate the intermediate stop based on corridors to prevent impossible routes
-    const rawStop = tripType === "intercity" ? (r as RouteEntry).stop : ((r as any).stop_city || (r as any).stop_1);
+    const rawStop = r.stop_1 || 'Unknown';
     const validatedStops = validateStops(from_stop, to_stop, [rawStop]);
-    const stop = validatedStops.length > 0 ? validatedStops[0] : rawStop; // Fallback to raw if validation entirely ignores it (though validation generally retains non-resolvable ones)
+    const stop = validatedStops.length > 0 ? validatedStops[0] : rawStop;
 
-    const eta_min = tripType === "intercity" ? (r as RouteEntry).eta_min : ((r as any).eta_min || parseInt((r as any).eta) || 60);
-    const price_inr = tripType === "intercity" ? (r as RouteEntry).price_inr : ((r as any).price_inr || (r as any).price);
+    const eta_min = r.eta_min || 60;
+    const price_inr = r.price_inr || 100;
 
-    const hash = from_stop.charCodeAt(0) + to_stop.charCodeAt(0) + r.route_no.charCodeAt(0);
+    const hash = (from_stop?.charCodeAt(0) || 0) + (to_stop?.charCodeAt(0) || 0) + (r.route_id?.charCodeAt(0) || 0);
     const now = new Date();
     const startOffsetMinutes = hash % 30;
     now.setMinutes(now.getMinutes() + startOffsetMinutes);
@@ -74,16 +70,18 @@ const mapRoutesToBuses = (routes: (RouteEntry | OutstationRouteEntry)[], tripTyp
     const arrival = formatTime(arrivalTime);
 
     return {
-      ...r,
+      id: i,
+      route_no: r.route_id,
       from_stop,
       to_stop,
       stop,
-      eta_min,
+      distance_km: r.distance_km,
       price_inr,
-      id: i,
+      crowd: r.crowd,
+      eta_min,
       departure,
       arrival,
-      duration: tripType === "intercity" ? `${eta_min} min` : (r as OutstationRouteEntry).eta,
+      duration: `${eta_min} min`,
       status: hash % 4 === 0 ? "Delayed" : "On time",
     };
   });
@@ -112,11 +110,9 @@ const BusResultsPage = () => {
     load();
   }, [initialState.tripType, selectedState]);
 
-  // States for passenger options
   const [passengers, setPassengers] = useState(1);
   const [isPassengerModalOpen, setIsPassengerModalOpen] = useState(false);
 
-  // State for booking confirmation dialog
   const [selectedBus, setSelectedBus] = useState<BusRoute | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -124,7 +120,6 @@ const BusResultsPage = () => {
     const isOutstation = initialState.tripType === "outstation";
     const isLongRoute = bus.distance_km > 35;
 
-    // Redirect to seat selection for outstation OR routes > 35km
     const targetRoute = (isOutstation || isLongRoute) ? "/seat-selection" : "/book-ticket";
 
     navigate(targetRoute, {
@@ -146,7 +141,6 @@ const BusResultsPage = () => {
     setIsDialogOpen(false);
     const currentUser = authService.getCurrentUser();
 
-    // Save to localStorage (legacy) and Firestore
     if (selectedBus) {
       const newBooking = {
         id: Date.now(),
@@ -160,39 +154,34 @@ const BusResultsPage = () => {
       const existing = JSON.parse(localStorage.getItem("myBookings") || "[]");
       localStorage.setItem("myBookings", JSON.stringify([newBooking, ...existing]));
 
-      // Auto-save booking + user route to Firestore
+      // Auto-save booking + user route to Supabase
       if (currentUser) {
-        // 1. Create Booking
-        firestoreService.createBooking(
-          currentUser.id,
-          selectedBus.from_stop,
-          selectedBus.to_stop,
-          newBooking.date,
-          {
-            price: selectedBus.price_inr * passengers,
-            passengers: passengers,
-            departureTime: selectedBus.departure,
-            userName: currentUser.name,
-          }
-        ).catch(err => console.error("Firestore booking error:", err));
+        // 1. Create Booking in Supabase
+        busService.createBooking({
+            user_id: currentUser.id,
+            bus_id: selectedBus.route_no, // Using route_no as proxy for bus_id if direct ID unavailable
+            source_stop_id: selectedBus.from_stop,
+            destination_stop_id: selectedBus.to_stop,
+            fare: selectedBus.price_inr * passengers
+        }).catch(err => console.error("Supabase booking error:", err));
 
-        // 2. Save User Route (for frequency tracking)
-        firestoreService.saveUserRoute(
-          currentUser.id,
-          selectedBus.from_stop,
-          selectedBus.to_stop
-        ).catch(err => console.error("Firestore route save error:", err));
+        // 2. Save Search History (replaces frequency tracking)
+        busService.saveSearchHistory(
+            currentUser.id,
+            selectedBus.from_stop,
+            selectedBus.to_stop,
+            initialState.tripType || 'intercity'
+        ).catch(err => console.error("Supabase search history error:", err));
       }
     }
 
-    toast.success("Booking confirmed!", {
-      description: `Your ticket for ${selectedBus?.route_no} has been booked successfully.`,
-    });
-    // Pass the actual booking to the confirmation page
+    notificationService.showLocalNotification(
+      "Booking Confirmed! 🚌",
+      `Your ticket for ${selectedBus?.route_no} has been booked successfully.`
+    );
     navigate("/confirmation", { state: { bus: selectedBus, passengers } });
   };
 
-  // Filter buses based on the active search
   const filteredBuses = useMemo(() => {
     const qFrom = (activeSearch.from || "").trim().toLowerCase();
     const qTo = (activeSearch.to || "").trim().toLowerCase();
@@ -203,13 +192,11 @@ const BusResultsPage = () => {
       const busFrom = bus.from_stop.toLowerCase();
       const busTo = bus.to_stop.toLowerCase();
 
-      // Match forward (A -> B)
       const matchForward = (!qFrom || busFrom.includes(qFrom)) && (!qTo || busTo.includes(qTo));
-      // Match backward (B -> A), since the bus route typically runs in both directions
       const matchBackward = (!qFrom || busTo.includes(qFrom)) && (!qTo || busFrom.includes(qTo));
 
       return matchForward || matchBackward;
-    }).slice(0, 50); // Limit to 50 results so the page doesn't crash
+    }).slice(0, 50); 
   }, [activeSearch, allBuses]);
 
   const handleSearch = () => {
@@ -454,14 +441,5 @@ const BusResultsPage = () => {
     </PageShell >
   );
 };
-
-function CheckCircle(props: React.SVGProps<SVGSVGElement> & { className?: string }) {
-  return (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  );
-}
 
 export default BusResultsPage;

@@ -1,31 +1,29 @@
 // ============================================================
-// LiveBusOverlay — Renders real-time Firestore bus markers
+// LiveBusOverlay — Renders real-time Supabase bus markers
 // ============================================================
+// Migrated from Firestore. 
 // This component is a transparent overlay that adds live bus
-// markers from Firestore on top of any Leaflet map. It finds
-// the existing map instance in the DOM and adds markers to it.
+// markers from Supabase on top of any Leaflet map.
 // ============================================================
 
 import { useEffect, useRef } from "react";
 import * as L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { FirestoreLiveBus } from "../hooks/useFirestoreLiveBuses";
+import type { SupabaseLiveBus } from "../hooks/useSupabaseLiveBuses";
 
 interface LiveBusOverlayProps {
-    buses: FirestoreLiveBus[];
+    buses: SupabaseLiveBus[];
     mapInstance: L.Map | null;
 }
 
-const createLiveMarkerHtml = (bus: FirestoreLiveBus): string => {
-    const ageMs = bus.lastUpdated
-        ? Date.now() -
-          (bus.lastUpdated.toMillis
-              ? bus.lastUpdated.toMillis()
-              : bus.lastUpdated.seconds
-              ? bus.lastUpdated.seconds * 1000
-              : 0)
-        : 0;
-    const ageSec = Math.round(ageMs / 1000);
+const getAgeMs = (lastUpdated: any): number => {
+    if (!lastUpdated) return Infinity;
+    const ms = new Date(lastUpdated).getTime();
+    return ms > 0 ? Date.now() - ms : Infinity;
+};
+
+const createLiveMarkerHtml = (bus: SupabaseLiveBus): string => {
+    const ageSec = Math.round(getAgeMs(bus.lastUpdated) / 1000);
     const ageLabel = ageSec < 60 ? `${ageSec}s` : `${Math.floor(ageSec / 60)}m`;
     const isRecent = ageSec < 30;
     const borderColor = isRecent ? "#22c55e" : "#f59e0b";
@@ -57,16 +55,8 @@ const createLiveMarkerHtml = (bus: FirestoreLiveBus): string => {
 </div>`;
 };
 
-const createLivePopupHtml = (bus: FirestoreLiveBus): string => {
-    const ageMs = bus.lastUpdated
-        ? Date.now() -
-          (bus.lastUpdated.toMillis
-              ? bus.lastUpdated.toMillis()
-              : bus.lastUpdated.seconds
-              ? bus.lastUpdated.seconds * 1000
-              : 0)
-        : 0;
-    const ageSec = Math.round(ageMs / 1000);
+const createLivePopupHtml = (bus: SupabaseLiveBus): string => {
+    const ageSec = Math.round(getAgeMs(bus.lastUpdated) / 1000);
     const ageLabel = ageSec < 5 ? "Just now" : ageSec < 60 ? `${ageSec}s ago` : `${Math.floor(ageSec / 60)}m ago`;
 
     return `
@@ -135,15 +125,12 @@ const LiveBusOverlay: React.FC<LiveBusOverlayProps> = ({ buses, mapInstance }) =
     useEffect(() => {
         if (!mapInstance) return;
 
-        // Create layer group if not exists
         if (!layerRef.current) {
             layerRef.current = L.layerGroup().addTo(mapInstance);
         }
 
-        // Clear old markers
         layerRef.current.clearLayers();
 
-        // Add live bus markers
         buses.forEach((bus) => {
             const icon = L.divIcon({
                 className: "",
@@ -155,7 +142,7 @@ const LiveBusOverlay: React.FC<LiveBusOverlayProps> = ({ buses, mapInstance }) =
 
             L.marker([bus.latitude, bus.longitude], {
                 icon,
-                zIndexOffset: 5000, // Always on top of simulated markers
+                zIndexOffset: 5000,
             })
                 .bindPopup(createLivePopupHtml(bus), {
                     closeButton: false,
@@ -165,7 +152,6 @@ const LiveBusOverlay: React.FC<LiveBusOverlayProps> = ({ buses, mapInstance }) =
                 .addTo(layerRef.current!);
         });
 
-        // Cleanup on unmount
         return () => {
             if (layerRef.current) {
                 layerRef.current.clearLayers();
@@ -187,9 +173,6 @@ const LiveBusOverlay: React.FC<LiveBusOverlayProps> = ({ buses, mapInstance }) =
             }
             .live-bus-popup .leaflet-popup-content {
                 margin: 14px 16px !important;
-            }
-            .live-bus-popup .leaflet-popup-tip {
-                box-shadow: 2px 2px 10px rgba(0,0,0,0.08) !important;
             }
             .live-bus-popup a.leaflet-popup-close-button {
                 display: none !important;

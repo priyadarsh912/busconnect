@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Ticket, MapPin, Calendar, Clock, RefreshCw } from "lucide-react";
+import { ArrowLeft, Ticket, Calendar, Clock, RefreshCw } from "lucide-react";
 import PageShell from "@/components/PageShell";
-import { firestoreService } from "../services/firestoreService";
+import { busService } from "../services/busService";
 import { authService } from "../services/authService";
+import { offlineBusService } from "../services/offline/OfflineBusService";
 
 interface Booking {
     id: string | number;
@@ -27,22 +28,29 @@ const MyBookingsPage = () => {
             const currentUser = authService.getCurrentUser();
             
             if (currentUser) {
-                // Fetch from Firestore (handles both new and legacy field names)
-                const data = await firestoreService.getBookingsPerUser(currentUser.id);
+                try {
+                    // Fetch from Offline-aware Service (Combines remote + local queue)
+                    const data = await offlineBusService.getUserBookings(currentUser.id);
 
-                if (data && data.length > 0) {
-                    const mappedBookings: Booking[] = data.map((b: any) => ({
-                        id: b.firebaseId || b.id || Date.now(), 
-                        from: b.from || b.from_stop || "Unknown",
-                        to: b.to || b.to_stop || "Unknown",
-                        time: b.departureTime || b.departure_time || "Scheduled",
-                        price: b.price || 0,
-                        date: b.travelDate || b.booking_date || "N/A",
-                        userName: b.userName || b.user_name || null
-                    }));
-                    setBookings(mappedBookings);
-                } else {
-                    // Fallback to localStorage if Firestore is empty
+                    if (data && data.length > 0) {
+                        const mappedBookings: Booking[] = data.map((b: any) => ({
+                            id: b.id,
+                            from: b.routes?.source?.name || b.from || "Unknown",
+                            to: b.routes?.destination?.name || b.to || "Unknown",
+                            time: b.time || new Date(b.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                            price: b.fare || b.price || 0,
+                            date: b.date || new Date(b.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+                            userName: b.userName || currentUser.name,
+                            status: b.status
+                        }));
+                        setBookings(mappedBookings);
+                    } else {
+                        // Fallback to localStorage
+                        const saved = JSON.parse(localStorage.getItem("myBookings") || "[]");
+                        setBookings(saved);
+                    }
+                } catch (err) {
+                    console.error("Supabase fetch error:", err);
                     const saved = JSON.parse(localStorage.getItem("myBookings") || "[]");
                     setBookings(saved);
                 }
@@ -112,6 +120,9 @@ const MyBookingsPage = () => {
                                     <p className="font-bold text-sm">{booking.userName || "Default User"}</p>
                                 </div>
                                 <div className="text-right">
+                                    {(booking as any).status === 'pending_sync' && (
+                                        <p className="text-[10px] font-bold text-orange-500 uppercase mb-1">Syncing...</p>
+                                    )}
                                     <p className="text-xs text-muted-foreground">Ticket ID: #{booking.id.toString().slice(-6)}</p>
                                     <p className="font-extrabold text-primary text-lg">₹{booking.price}</p>
                                 </div>
