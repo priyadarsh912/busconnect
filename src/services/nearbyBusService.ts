@@ -92,8 +92,8 @@ export const nearbyBusService = {
             for (const snap of snapshots) {
                 for (const doc of snap.docs) {
                     const data = doc.data();
-                    const busLat = data.lat || data.latitude;
-                    const busLng = data.lng || data.longitude;
+                    const busLat = data.lat ?? data.latitude;
+                    const busLng = data.lng ?? data.longitude;
                     
                     if (busLat === undefined || busLng === undefined) continue;
 
@@ -116,7 +116,7 @@ export const nearbyBusService = {
             return matchingDocs.sort((a, b) => a.distanceKm - b.distanceKm);
         } catch (error) {
             console.error("Firebase fetchNearbyBuses error:", error);
-            return [];
+            throw error;
         }
     },
 
@@ -149,8 +149,8 @@ export const nearbyBusService = {
                 const unsub = onSnapshot(q, (snapshot) => {
                     snapshot.docChanges().forEach((change) => {
                         const data = change.doc.data();
-                        const busLat = data.lat || data.latitude;
-                        const busLng = data.lng || data.longitude;
+                        const busLat = data.lat ?? data.latitude;
+                        const busLng = data.lng ?? data.longitude;
 
                         if (change.type === 'removed') {
                             allBuses.delete(change.doc.id);
@@ -185,6 +185,7 @@ export const nearbyBusService = {
             }
         } catch (error: any) {
             console.error("Failed to setup Firebase listeners:", error);
+            unsubscribes.forEach(unsub => unsub());
             if (onError) onError(error);
         }
 

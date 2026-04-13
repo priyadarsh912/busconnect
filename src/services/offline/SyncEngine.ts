@@ -5,6 +5,7 @@ import { analyticsService } from '../AnalyticsService';
 
 export class SyncEngine {
   private isSyncing: boolean = false;
+  private syncIntervalId: any = null;
 
   constructor() {
     this.init();
@@ -19,11 +20,21 @@ export class SyncEngine {
     });
 
     // Background sync: Check for pending items every 5 seconds if online
-    setInterval(() => {
+    this.syncIntervalId = setInterval(() => {
       if (networkManager.getStatus()) {
         this.processQueue();
       }
     }, 5000);
+  }
+
+  /**
+   * Stop background sync interval
+   */
+  public stop() {
+    if (this.syncIntervalId) {
+      clearInterval(this.syncIntervalId);
+      this.syncIntervalId = null;
+    }
   }
 
   /**

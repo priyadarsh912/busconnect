@@ -725,45 +725,50 @@ const TrackingPage = () => {
     let unsub: any = null;
     let fallbackInterval: any = null;
     let hasLiveLocation = false;
+    let isMounted = true;
+    let localUnsub: (() => void) | null = null;
 
-    // Use dynamic import so we don't break the build if not at top-level
-    import('firebase/firestore').then(({ collection, query, where, onSnapshot }) => {
-      import('../lib/firebase').then(({ db }) => {
+    const setupLiveTracking = async () => {
+      try {
+        const { collection, query, where, onSnapshot } = await import('firebase/firestore');
+        const { db } = await import('../lib/firebase');
+
+        if (!isMounted) return;
+
         const routeId = activeRoute.bus_id || activeRoute.route_id;
-        
         if (!routeId || !db) return;
 
-        // Try to find the driver for this bus route
         const q = query(
           collection(db, 'bus_locations'),
           where('busId', '==', routeId)
         );
 
-        unsub = onSnapshot(q, (snapshot) => {
-          if (!snapshot.empty) {
+        localUnsub = onSnapshot(q, (snapshot) => {
+          if (!snapshot.empty && isMounted) {
             hasLiveLocation = true;
-            // Clear fallback
             if (fallbackInterval) {
               clearInterval(fallbackInterval);
               fallbackInterval = null;
             }
 
-            // Get most recently updated driver location
             let latestDoc = snapshot.docs[0].data();
             snapshot.docs.forEach(doc => {
-              if (doc.data().timestamp > latestDoc.timestamp) {
-                latestDoc = doc.data();
+              const docData = doc.data();
+              const docTime = docData.timestamp?.toMillis?.() || docData.timestamp?.seconds || 0;
+              const latestTime = latestDoc.timestamp?.toMillis?.() || latestDoc.timestamp?.seconds || 0;
+              
+              if (docTime > latestTime) {
+                latestDoc = docData;
               }
             });
 
-            const liveLat = latestDoc.lat || latestDoc.latitude;
-            const liveLng = latestDoc.lng || latestDoc.longitude;
+            const liveLat = latestDoc.lat ?? latestDoc.latitude;
+            const liveLng = latestDoc.lng ?? latestDoc.longitude;
             
-            if (liveLat && liveLng && busMarkerRef.current) {
+            if (liveLat != null && liveLng != null && busMarkerRef.current) {
               const newPos: [number, number] = [liveLat, liveLng];
               busMarkerRef.current.setLatLng(newPos);
               
-              // Calculate progress along polyline based on closest point
               let closestIdx = 0;
               let minDistance = Infinity;
               
@@ -778,24 +783,34 @@ const TrackingPage = () => {
                 }
               });
               
-              const newProgress = (closestIdx / routeCoords.length) * 100;
+              const totalSteps = routeCoords.length;
+              const newProgress = totalSteps > 0 
+                ? Math.min(((closestIdx + 1) / totalSteps) * 100, 100) 
+                : 0;
               setProgress(newProgress);
             }
           }
+        }, (err) => {
+          console.error("TrackingPage: Live listener error:", err);
         });
-      });
-    });
 
-    // Fallback animation if no live data is available within 3 seconds
+        unsub = localUnsub;
+      } catch (err) {
+        console.error("TrackingPage: Failed to load Firestore imports:", err);
+      }
+    };
+
+    setupLiveTracking();
+
     const startFallback = () => {
-      if (hasLiveLocation) return;
+      if (hasLiveLocation || !isMounted) return;
       
       const speedMs = 6.94;
       const updateIntervalSeconds = 4;
       const distanceToMovePerUpdate = speedMs * updateIntervalSeconds;
 
       fallbackInterval = setInterval(() => {
-        if (hasLiveLocation) {
+        if (hasLiveLocation || !isMounted) {
           clearInterval(fallbackInterval);
           return;
         }
@@ -803,17 +818,16 @@ const TrackingPage = () => {
         setProgress((prev) => {
           const totalDistanceMeters = (activeRoute?.distance_km || 10) * 1000;
           const progressIncrement = (distanceToMovePerUpdate / totalDistanceMeters) * 100;
-
           const next = Math.min(prev + progressIncrement, 100);
+          const totalCoords = routeCoords.length;
 
-          const coordIndex = Math.min(
-            Math.floor((next / 100) * routeCoords.length),
-            routeCoords.length - 1,
-          );
+          const coordIndex = totalCoords > 0 
+            ? Math.min(Math.floor((next / 100) * totalCoords), totalCoords - 1)
+            : -1;
 
-          const newPos = routeCoords[coordIndex];
-          if (newPos) {
-            busMarkerRef.current?.setLatLng(newPos);
+          if (coordIndex >= 0) {
+            const newPos = routeCoords[coordIndex];
+            if (newPos) busMarkerRef.current?.setLatLng(newPos);
           }
 
           if (next >= 100) clearInterval(fallbackInterval);
@@ -825,6 +839,8 @@ const TrackingPage = () => {
     const fallbackTimeout = setTimeout(startFallback, 3000);
 
     return () => {
+      isMounted = false;
+      if (localUnsub) localUnsub();
       if (unsub) unsub();
       if (fallbackInterval) clearInterval(fallbackInterval);
       clearTimeout(fallbackTimeout);
