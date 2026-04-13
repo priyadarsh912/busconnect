@@ -717,39 +717,119 @@ const TrackingPage = () => {
     };
   }, [from, to, viaStop, viaStop2]);
 
-  // Animation effect
+  // Animation & Live Tracking effect
   useEffect(() => {
-    if (routeCoords.length === 0 || !busMarkerRef.current || etaMinutes === 0)
+    if (routeCoords.length === 0 || !busMarkerRef.current || !activeRoute)
       return;
 
-    const speedMs = 6.94;
-    const updateIntervalSeconds = 4;
-    const distanceToMovePerUpdate = speedMs * updateIntervalSeconds;
+    let unsub: any = null;
+    let fallbackInterval: any = null;
+    let hasLiveLocation = false;
 
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        const totalDistanceMeters = (activeRoute?.distance_km || 10) * 1000;
-        const progressIncrement = (distanceToMovePerUpdate / totalDistanceMeters) * 100;
+    // Use dynamic import so we don't break the build if not at top-level
+    import('firebase/firestore').then(({ collection, query, where, onSnapshot }) => {
+      import('../lib/firebase').then(({ db }) => {
+        const routeId = activeRoute.bus_id || activeRoute.route_id;
+        
+        if (!routeId || !db) return;
 
-        const next = Math.min(prev + progressIncrement, 100);
-
-        const coordIndex = Math.min(
-          Math.floor((next / 100) * routeCoords.length),
-          routeCoords.length - 1,
+        // Try to find the driver for this bus route
+        const q = query(
+          collection(db, 'bus_locations'),
+          where('busId', '==', routeId)
         );
 
-        const newPos = routeCoords[coordIndex];
-        if (newPos) {
-          busMarkerRef.current?.setLatLng(newPos);
-        }
+        unsub = onSnapshot(q, (snapshot) => {
+          if (!snapshot.empty) {
+            hasLiveLocation = true;
+            // Clear fallback
+            if (fallbackInterval) {
+              clearInterval(fallbackInterval);
+              fallbackInterval = null;
+            }
 
-        if (next >= 100) clearInterval(interval);
-        return next;
+            // Get most recently updated driver location
+            let latestDoc = snapshot.docs[0].data();
+            snapshot.docs.forEach(doc => {
+              if (doc.data().timestamp > latestDoc.timestamp) {
+                latestDoc = doc.data();
+              }
+            });
+
+            const liveLat = latestDoc.lat || latestDoc.latitude;
+            const liveLng = latestDoc.lng || latestDoc.longitude;
+            
+            if (liveLat && liveLng && busMarkerRef.current) {
+              const newPos: [number, number] = [liveLat, liveLng];
+              busMarkerRef.current.setLatLng(newPos);
+              
+              // Calculate progress along polyline based on closest point
+              let closestIdx = 0;
+              let minDistance = Infinity;
+              
+              routeCoords.forEach((coord, i) => {
+                const dist = Math.sqrt(
+                  Math.pow(coord[0] - liveLat, 2) + 
+                  Math.pow(coord[1] - liveLng, 2)
+                );
+                if (dist < minDistance) {
+                  minDistance = dist;
+                  closestIdx = i;
+                }
+              });
+              
+              const newProgress = (closestIdx / routeCoords.length) * 100;
+              setProgress(newProgress);
+            }
+          }
+        });
       });
-    }, updateIntervalSeconds * 1000);
+    });
 
-    return () => clearInterval(interval);
-  }, [routeCoords, etaMinutes]);
+    // Fallback animation if no live data is available within 3 seconds
+    const startFallback = () => {
+      if (hasLiveLocation) return;
+      
+      const speedMs = 6.94;
+      const updateIntervalSeconds = 4;
+      const distanceToMovePerUpdate = speedMs * updateIntervalSeconds;
+
+      fallbackInterval = setInterval(() => {
+        if (hasLiveLocation) {
+          clearInterval(fallbackInterval);
+          return;
+        }
+        
+        setProgress((prev) => {
+          const totalDistanceMeters = (activeRoute?.distance_km || 10) * 1000;
+          const progressIncrement = (distanceToMovePerUpdate / totalDistanceMeters) * 100;
+
+          const next = Math.min(prev + progressIncrement, 100);
+
+          const coordIndex = Math.min(
+            Math.floor((next / 100) * routeCoords.length),
+            routeCoords.length - 1,
+          );
+
+          const newPos = routeCoords[coordIndex];
+          if (newPos) {
+            busMarkerRef.current?.setLatLng(newPos);
+          }
+
+          if (next >= 100) clearInterval(fallbackInterval);
+          return next;
+        });
+      }, updateIntervalSeconds * 1000);
+    };
+
+    const fallbackTimeout = setTimeout(startFallback, 3000);
+
+    return () => {
+      if (unsub) unsub();
+      if (fallbackInterval) clearInterval(fallbackInterval);
+      clearTimeout(fallbackTimeout);
+    };
+  }, [routeCoords, activeRoute]);
 
   const isValidCoord = (lat?: number, lon?: number) =>
     lat !== undefined && lon !== undefined && lat > 15 && lat < 45 && lon > 65 && lon < 95;

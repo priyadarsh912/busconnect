@@ -1,11 +1,13 @@
 // ============================================================
-// NEARBY BUS SERVICE — Geo-Query Engine for BusConnect (Supabase)
+// NEARBY BUS SERVICE — Geo-Query Engine for BusConnect (Firebase)
 // ============================================================
-// Migrated from Firestore/GeoFire to Supabase.
-// Uses simple distance filtering for nearby buses (PostgreSQL).
+// Connects with the driver app which syncs to Firestore.
+// Uses geofire-common and Firebase Firestore.
 // ============================================================
 
-import { supabase } from "../lib/supabase";
+import { collection, query, getDocs, onSnapshot, orderBy, startAt, endAt } from "firebase/firestore";
+import { geohashQueryBounds, distanceBetween } from "geofire-common";
+import { db } from "../lib/firebase";
 
 // ─────────────────────────────────────────────────
 // TYPES
@@ -40,22 +42,19 @@ const DEFAULT_MAX_AGE_SEC = 300;
 // HELPERS
 // ─────────────────────────────────────────────────
 
-const getDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-};
-
-const isWithinAge = (updatedAt: string | null, maxAgeSec: number): boolean => {
+const isWithinAge = (updatedAt: any, maxAgeSec: number): boolean => {
     if (!updatedAt) return false;
     const now = Date.now();
-    const updatedMs = new Date(updatedAt).getTime();
+    let updatedMs = 0;
+    
+    if (updatedAt && typeof updatedAt.toMillis === 'function') {
+        updatedMs = updatedAt.toMillis();
+    } else if (updatedAt instanceof Date) {
+        updatedMs = updatedAt.getTime();
+    } else {
+        updatedMs = new Date(updatedAt).getTime();
+    }
+    
     return now - updatedMs <= maxAgeSec * 1000;
 };
 
@@ -70,37 +69,55 @@ export const nearbyBusService = {
     fetchNearbyBuses: async (config: GeoQueryConfig): Promise<NearbyBus[]> => {
         const { lat, lng, maxAgeSec = DEFAULT_MAX_AGE_SEC } = config;
         const radiusKm = Math.max(MIN_RADIUS_KM, Math.min(MAX_RADIUS_KM, config.radiusKm));
+        const radiusInM = radiusKm * 1000;
+        const center = [lat, lng] as [number, number];
 
-        // Fetch all buses with locations (ideally we would use PostGIS in SQL)
-        const { data, error } = await supabase
-            .from('buses')
-            .select('*')
-            .not('latitude', 'is', null)
-            .not('longitude', 'is', null);
+        try {
+            const bounds = geohashQueryBounds(center, radiusInM);
+            const promises = [];
 
-        if (error) {
-            console.error("Supabase fetchNearbyBuses error:", error);
+            for (const b of bounds) {
+                const q = query(
+                    collection(db, "bus_locations"),
+                    orderBy("geohash"),
+                    startAt(b[0]),
+                    endAt(b[1])
+                );
+                promises.push(getDocs(q));
+            }
+
+            const snapshots = await Promise.all(promises);
+            const matchingDocs: NearbyBus[] = [];
+
+            for (const snap of snapshots) {
+                for (const doc of snap.docs) {
+                    const data = doc.data();
+                    const busLat = data.lat || data.latitude;
+                    const busLng = data.lng || data.longitude;
+                    
+                    if (busLat === undefined || busLng === undefined) continue;
+
+                    const distanceInKm = distanceBetween([busLat, busLng], center);
+                    
+                    if (distanceInKm <= radiusKm && isWithinAge(data.lastUpdated || data.timestamp, maxAgeSec)) {
+                        matchingDocs.push({
+                            busId: data.busId || doc.id,
+                            driverId: data.driverId || doc.id,
+                            latitude: busLat,
+                            longitude: busLng,
+                            speed: data.speed || 0,
+                            updatedAt: data.lastUpdated ? (typeof data.lastUpdated.toDate === 'function' ? data.lastUpdated.toDate().toISOString() : new Date(data.lastUpdated).toISOString()) : null,
+                            distanceKm: Math.round(distanceInKm * 100) / 100,
+                        });
+                    }
+                }
+            }
+
+            return matchingDocs.sort((a, b) => a.distanceKm - b.distanceKm);
+        } catch (error) {
+            console.error("Firebase fetchNearbyBuses error:", error);
             return [];
         }
-
-        return data
-            .map((bus: any) => {
-                const dist = getDistanceKm(lat, lng, bus.latitude, bus.longitude);
-                return {
-                    busId: bus.id,
-                    driverId: bus.driver_id,
-                    latitude: bus.latitude,
-                    longitude: bus.longitude,
-                    speed: bus.speed || 0,
-                    updatedAt: bus.updated_at,
-                    distanceKm: Math.round(dist * 100) / 100,
-                };
-            })
-            .filter((bus: NearbyBus) => 
-                bus.distanceKm <= radiusKm && 
-                isWithinAge(bus.updatedAt, maxAgeSec)
-            )
-            .sort((a, b) => a.distanceKm - b.distanceKm);
     },
 
     /**
@@ -113,32 +130,66 @@ export const nearbyBusService = {
     ) => {
         const { lat, lng, maxAgeSec = DEFAULT_MAX_AGE_SEC } = config;
         const radiusKm = Math.max(MIN_RADIUS_KM, Math.min(MAX_RADIUS_KM, config.radiusKm));
+        const radiusInM = radiusKm * 1000;
+        const center = [lat, lng] as [number, number];
 
-        const channel = supabase
-            .channel('nearby-buses')
-            .on(
-                'postgres_changes',
-                { event: '*', schema: 'public', table: 'buses' },
-                async () => {
-                    // Re-fetch all nearby whenever any bus updates
-                    // A more optimized way would be to update the local map, 
-                    // but for simplicity we re-fetch the bounded set.
-                    const buses = await nearbyBusService.fetchNearbyBuses(config);
-                    onUpdate(buses);
-                }
-            )
-            .subscribe((status) => {
-                if (status === 'SUBSCRIBED') {
-                    // Initial fetch
-                    nearbyBusService.fetchNearbyBuses(config).then(onUpdate);
-                }
-                if (status === 'CHANNEL_ERROR' && onError) {
-                    onError(new Error("Supabase Realtime Channel Error"));
-                }
-            });
+        const bounds = geohashQueryBounds(center, radiusInM);
+        const unsubscribes: Array<() => void> = [];
+        let allBuses: Map<string, NearbyBus> = new Map();
+
+        try {
+            for (const b of bounds) {
+                const q = query(
+                    collection(db, "bus_locations"),
+                    orderBy("geohash"),
+                    startAt(b[0]),
+                    endAt(b[1])
+                );
+
+                const unsub = onSnapshot(q, (snapshot) => {
+                    snapshot.docChanges().forEach((change) => {
+                        const data = change.doc.data();
+                        const busLat = data.lat || data.latitude;
+                        const busLng = data.lng || data.longitude;
+
+                        if (change.type === 'removed') {
+                            allBuses.delete(change.doc.id);
+                        } else if (busLat !== undefined && busLng !== undefined) {
+                            const distanceInKm = distanceBetween([busLat, busLng], center);
+
+                            if (distanceInKm <= radiusKm && isWithinAge(data.lastUpdated || data.timestamp, maxAgeSec)) {
+                                allBuses.set(change.doc.id, {
+                                    busId: data.busId || change.doc.id,
+                                    driverId: data.driverId || change.doc.id,
+                                    latitude: busLat,
+                                    longitude: busLng,
+                                    speed: data.speed || 0,
+                                    updatedAt: data.lastUpdated ? (typeof data.lastUpdated.toDate === 'function' ? data.lastUpdated.toDate().toISOString() : new Date(data.lastUpdated).toISOString()) : null,
+                                    distanceKm: Math.round(distanceInKm * 100) / 100,
+                                });
+                            } else {
+                                allBuses.delete(change.doc.id);
+                            }
+                        }
+                    });
+
+                    // Emit updated list
+                    const busesArray = Array.from(allBuses.values()).sort((a, b) => a.distanceKm - b.distanceKm);
+                    onUpdate(busesArray);
+                }, (error) => {
+                    console.error("Firestore real-time error:", error);
+                    if (onError) onError(error);
+                });
+
+                unsubscribes.push(unsub);
+            }
+        } catch (error: any) {
+            console.error("Failed to setup Firebase listeners:", error);
+            if (onError) onError(error);
+        }
 
         return () => {
-            supabase.removeChannel(channel);
+            unsubscribes.forEach(unsub => unsub());
         };
     },
 };
