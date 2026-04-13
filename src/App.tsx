@@ -51,7 +51,7 @@ import { useNotifications } from "./hooks/useNotifications";
 import { sqlService } from "./services/offline/SQLService";
 import { syncEngine } from "./services/offline/SyncEngine";
 import { networkManager } from "./services/offline/NetworkManager";
-import DebugSyncPanel from "./components/DebugSyncPanel";
+
 import OfflineOverlay from "./components/OfflineOverlay";
 import { analyticsService } from "./services/AnalyticsService";
 
@@ -180,7 +180,7 @@ const App = () => {
               <AnimatedRoutes />
               <SOSButton />
               <BottomNav />
-              <DebugSyncPanel />
+
             </BrowserRouter>
           </TooltipProvider>
         </QueryClientProvider>

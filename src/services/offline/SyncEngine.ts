@@ -17,6 +17,13 @@ export class SyncEngine {
         this.processQueue();
       }
     });
+
+    // Background sync: Check for pending items every 5 seconds if online
+    setInterval(() => {
+      if (networkManager.getStatus()) {
+        this.processQueue();
+      }
+    }, 5000);
   }
 
   /**

@@ -65,14 +65,7 @@ const DebugSyncPanel: React.FC = () => {
                         )}
                     </div>
 
-                    {isOnline && pendingItems.length > 0 && (
-                        <button 
-                            onClick={() => syncEngine.processQueue()}
-                            className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                        >
-                            <RefreshCw size={12} /> SYNC NOW
-                        </button>
-                    )}
+
                 </div>
             )}
         </div>
